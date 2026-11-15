@@ -15,9 +15,12 @@ BossBuildAdvisor/
 │   ├── ItemTooltipAnalyzer.cs          # Infers weapon/accessory roles & class affinity from tooltips/stats
 │   ├── ArmorSetAnalyzer.cs             # Extracts and scores armor set bonuses vs. individual pieces
 │   └── BuildRecommender.cs             # Selects top weapons, armor, wings, and accessories per stage/class
+├── Players/
+│   └── AdvisorPlayer.cs                # Hotkey trigger handling (ToggleAdvisor)
 ├── Systems/
-│   └── AdvisorSystem.cs                # Lifecycle hooks, keybinds, inventory button toggle
+│   └── AdvisorSystem.cs                # Lifecycle hooks, UI updates, inventory toggle layer
 ├── UI/
+│   ├── AdvisorInventoryButton.cs       # Inventory book toggle UIState/UIElement button
 │   ├── AdvisorUIElements.cs            # Custom UI widgets (slots, cards, tabs)
 │   └── AdvisorUIState.cs               # Main advisor window layout & interaction
 ├── Commands/

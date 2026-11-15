@@ -58,7 +58,7 @@ You can also run `/advisor dump` in chat and attach relevant snippets when openi
 ## Credits & Disclosure
 
 - **Author:** `suley`
-- **AI Assistance Disclosure:** Code, progression/scoring algorithms, UI layout, and documentation were developed collaboratively with **Antigravity** (AI coding assistant), tested live inside an isolated tModLoader lab environment against modded packs.
+- **AI Assistance Disclosure:** Code, progression/scoring algorithms, UI layout, and documentation were developed collaboratively with **Google Antigravity / Gemini** ([@gemini-code-assist](https://github.com/gemini-code-assist)), tested live inside an isolated tModLoader lab environment against modded packs.
 - **License:** [MIT](LICENSE)
 
 ---
