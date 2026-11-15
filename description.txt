@@ -5,28 +5,29 @@ Instead of relying on hardcoded spreadsheets, it automatically inspects every lo
 
 [h2]What It Recommends Per Boss Stage[/h2]
 [list]
-[*] [b]Weapons & Ammo[/b] (and Sentry/Whip support for Summoners) filtered by progression and class
-[*] [b]Full Armor Sets[/b] (or best mixed gear fallback) with total defense & set bonus summary
-[*] [b]Role-Budgeted Accessories[/b] (Wings, Boots, Dash, Class Boost, Defense/Utility — suppresses redundant crafting precursors)
-[*] [b]Healing & Combat Buff Potions[/b] matching the target stage and class
-[*] [b]Acquisition Guide[/b]: Boss Drop, Craft recipe ingredients, NPC Drop, Shop, Crate/Bag, Shimmer, or Tier Estimate
+[*] [b]Weapons & Ammo[/b]: Up to 8 primary + 4 support/utility weapons + 3 ammo options (including Sentry/Whip support and custom mod classes)
+[*] [b]Armor Options (#1 / #2 / #3)[/b]: Top 3 selectable full sets or mixed loadouts with defense & set-bonus analysis (including 2-piece wizard robe sets)
+[*] [b]Role-Budgeted Accessories (Up to 14)[/b]: Wings, Boots, Dash, Class Boost, Defense/Utility — suppresses redundant crafting precursors (such as Rocket Boots once Spectre/Lightning Boots unlock)
+[*] [b]Potions & Buffs[/b]: Class-filtered combat buffs & healing matching the target stage
+[*] [b]Obtainability Difficulty Filter[/b]: Switch between [b]Loot: Comfort[/b] (excludes rare RNG farms, shimmer skips, and low-chance crates), [b]Loot: +Hard[/b], and [b]Loot: All RNG[/b] with exact acquisition steps
 [/list]
 
 [h2]Cross-Mod Compatibility[/h2]
 [list]
-[*] Uses [b]BossChecklist[/b] (`GetBossInfoDictionary` 2.0.0) when present, with automatic fallback scanning of `ContentSamples.NpcsByNetId`
-[*] Auto-discovers custom mod [b]DamageClasses[/b] (`DamageClassLoader`), custom armor sets (`IsArmorSet`), crafting recipes, `RecipeGroup`s, `ItemDropsDB`, NPC shops, and Shimmer transforms
+[*] Syncs 1:1 with [b]BossChecklist[/b] (`GetBossInfoDictionary` 2.0.0) ordering, visibility, and defeated checkmarks (with automatic standalone fallback)
+[*] Auto-discovers custom mod [b]DamageClasses[/b], custom armor sets, crafting recipes, `RecipeGroup`s, `ItemDropsDB`, NPC shops, and Shimmer transforms
 [*] [b]Client-side[/b] (`side = Client`) — safe for singleplayer and multiplayer servers without requiring server installation
 [/list]
 
 [h2]Controls & Commands[/h2]
 [list]
-[*] Press [b]K[/b] (rebindable in Controls) or click [b]Build Advisor [K][/b] while inventory is open
+[*] Press [b]K[/b] (rebindable in Controls, works on pause too) or click the [b]Build Advisor[/b] button next to BossChecklist's book icon in your inventory
+[*] Click the boss search bar and type directly (chat does not need to be open)
 [*] Chat commands: `/advisor`, `/advisor next`, `/advisor stage <boss>`, `/advisor rebuild`, `/advisor dump`
 [/list]
 
 [h2]RU / Русское описание[/h2]
-Автоматический советник билдов по боссам для любой сборки модов (включая модовые классы, броню, боссов и крафты из BossChecklist). Открывается по клавише [b]K[/b], кнопкой [b]Build Advisor [K][/b] в инвентаре или командой `/advisor`.
+Автоматический советник билдов по боссам для любой сборки модов (порядок и статусы 1:1 как в BossChecklist, модовые классы/броня/боссы, фильтр сложности добычи «Комфорт / +Сложно / Всё RNG», мгновенный поиск без открытия чата). Открывается по клавише [b]K[/b], кнопкой рядом с книжкой BossChecklist в инвентаре или командой `/advisor`.
 
 Version: {ModVersion}
-Open Source (MIT) | Built with AI assistance.
+Open Source (MIT) | Built collaboratively with Antigravity AI.

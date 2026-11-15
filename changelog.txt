@@ -1,0 +1,17 @@
+Boss Build Advisor v{ModVersion}
+
+[EN]
+- Exact 1:1 BossChecklist progression order, visibility filtering, and defeated status sync
+- New Obtainability Difficulty filter (Loot: Comfort / +Hard / All RNG) filtering rare RNG drops, Shimmer skips, and low-chance crates out of default Comfort builds
+- Expanded build recommendations: up to 8 primary + 4 support weapons + 3 ammo options, 3 selectable armor variants (#1 / #2 / #3), and up to 14 role-budgeted accessories
+- Repositioned inventory toggle icon button next to BossChecklist's book icon with automatic screen-edge/chest-UI flip, working K hotkey while paused, and instant boss search without opening chat
+- Fixed boot progression chains (Hermes/Flurry/Spectre/Lightning/Frostspark), Meteor Armor + Space Gun synergy, Pre-Hardmode ore/gem/chest availability, 2-piece robe armor pairing, and class-strict buff potion filtering
+- Full English (en-US) and Russian (ru-RU) localization parity
+
+[RU]
+- Точная синхронизация порядка боссов, видимости и отметок побед 1:1 с BossChecklist
+- Фильтр сложности добычи (Добыча: Комфорт / +Сложно / Всё RNG), скрывающий ультра-редкий фарм, шиммер-скипы и редкие ящики в режиме Комфорт
+- Расширенные подборки: до 8 основных + 4 доп. оружий + 3 варианта боеприпасов, 3 переключаемых сета брони (#1 / #2 / #3) и до 14 аксессуаров
+- Кнопка открытия перенесена к книжке BossChecklist в инвентаре, починен хоткей K и мгновенный поиск по боссам без открытия чата
+- Исправлены цепочки ботинок (Гермеса/Спектральные/Молниеносные/Искромётные), синергия метеоритной брони и бластера, доступность пре-хардмодных руд/самоцветов/сундуковых аксессуаров, парность 2-компонентных мантий и классовая фильтрация зелий
+- Полная английская (en-US) и русская (ru-RU) локализация
