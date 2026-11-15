@@ -11,10 +11,19 @@ UI: {
 	IncludeEstimatedOff: По тиру: ВЫКЛ
 	IncludeMinibossesOn: Мини/Ивенты: ВКЛ
 	IncludeMinibossesOff: Мини/Ивенты: ВЫКЛ
+	DifficultyComfortable: Добыча: Комфорт
+	DifficultyIncludeHard: Добыча: +Сложно
+	DifficultyAll: Добыча: Всё RNG
+	DifficultyEasy: Легко
+	DifficultyMedium: Средне
+	DifficultyHard: Сложно
+	DifficultyVeryHard: Хардкор-фарм
+	DifficultyLine: Сложность получения: {0} ({1})
+	ArmorOptionTab: "#{0}"
 	SearchPlaceholder: Поиск босса...
-	SectionWeapons: Оружие и боеприпасы
-	SectionArmor: Броня и сет-бонус
-	SectionAccessories: Аксессуары
+	SectionWeapons: Оружие и боеприпасы ({0})
+	SectionArmor: Варианты брони
+	SectionAccessories: Аксессуары ({0} осн. + {1} зап.)
 	SectionPotions: Зелья и баффы
 	SectionDetails: Детали предмета
 	BossDefeated: Побеждён
@@ -23,13 +32,45 @@ UI: {
 	ConfidenceVerified: Проверенный источник
 	ConfidenceCrafted: Цепочка крафта
 	ConfidenceTierEstimated: Оценка по тиру
-	NoArmorSetBonus: Сборный сет (цельный бонус не найден)
+	NoArmorSetBonus: Сборный сет без бонуса
 	ClickItemHint: Наведите для статов, нажмите на предмет — покажет крафт или дроп.
-	TotalDefense: Общая защита: {0}
+	TotalDefense: Защита: {0}
 	ModOrigin: Мод: {0}
 	UnlockStage: Доступно с этапа <= {0:0.0} ({1})
 	SourcePrefix: Где взять: {0}
 	ReasonsPrefix: Почему выбран: {0}
 	OpenButtonTooltip: Открыть советник билдов (Boss Build Advisor)
-	SlotsHeader: Слотов аксессуаров: {0}
+	SlotsHeader: Слотов: {0}+{1}
+}
+
+Loot: {
+	BossNamedDrop: Дроп с босса {0}
+	UnavailableBoss: Недоступный / секретный ивент ({0})
+	HiddenEvent: Скрытый / опциональный босс ({0})
+	BossDrop: Дроп с босса
+	BossRareDrop: Редкий дроп с босса ({0:0.#}%)
+	RareDrop: Редкий дроп ({0:0.#}%)
+	VeryRareDrop: Очень редкий фарм ({0:0.#}%)
+	ChanceDrop: Шанс дропа ({0:0.#}%)
+	CommonDrop: Частый дроп ({0:0.#}%)
+	DropGeneric: Обычный дроп
+	LockBox: Ключ данжа / преисподней
+	DungeonCrate: Ящик с рыбалки в данже
+	HardmodeCrate: Хардмод-ящик с рыбалки
+	BasicCrate: Рыбалка (базовый ящик)
+	BiomeCrate: Редкий ящик с рыбалки (RNG)
+	ShopBuy: Покупка у {0}
+	TravellingShop: Странствующий торговец (случайный завоз)
+	ShopExpensiveEarly: Дорогая покупка на раннем этапе ({0})
+	ShopMidCost: Недешёвая покупка у {0}
+	UndergroundJungle: Подземные джунгли
+	UndergroundDesert: Подземная пустыня / Экстрактор
+	UnderworldEarly: Преисподняя (ранний спуск)
+	UndergroundSnow: Подземные снега
+	PyramidRare: Редкая пирамида
+	WorldChest: Сундуки / исследование мира
+	WorldGather: Добыча ресурсов в мире
+	WorkbenchCraft: Крафт на верстаке
+	ShimmerTransform: Шиммер-трансформация
+	TierEstimate: Оценка по тиру (источник скрыт в коде мода)
 }

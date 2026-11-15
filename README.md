@@ -11,14 +11,16 @@ Instead of relying on hardcoded wikis or static tables, **Boss Build Advisor** s
 ## Features
 
 - **Automatic Modpack Analysis:** Builds a progression graph across vanilla and modded bosses, including cross-mod custom damage classes alongside Melee, Ranged, Magic, and Summon.
-- **Stage-by-Stage Loadout Recommendations:** Suggests weapons, armor sets (evaluating full set bonuses vs. mixed pieces), accessories, and wings matched to each boss milestone.
-- **Optional BossChecklist Integration:** Uses `BossChecklist` progression order when installed, and works standalone otherwise.
+- **Stage-by-Stage Expanded Loadouts:** Suggests up to **8 primary + 4 support weapons + 3 ammo options**, **3 selectable armor sets (`#1 / #2 / #3`)** comparing full set bonuses vs. mixed pieces, up to **14 accessories (core + alternatives)**, and **8 buff potions + healing**.
+- **Obtainability Difficulty Filter:** Cycles between **`Loot: Comfort`** (Easy/Medium only — filters out 0.2% rare drops, Shimmer skips, and early crates), **`Loot: +Hard`**, and **`Loot: All RNG`**, showing each item's exact difficulty rating and acquisition reason.
+- **Exact BossChecklist Sync:** Mirrors `BossChecklist` order, `VisibleOnChecklist` filtering, and defeated status (with standalone fallback if `BossChecklist` is not installed).
 - **Bilingual UI:** Built-in English (`en-US`) and Russian (`ru-RU`) localization with localized boss and item names.
 - **No World/Save Risk:** Read-only advisory UI and chat commands.
 
 ## Controls & Commands
 
-- **Open / Close Advisor UI:** Press **`K`** (configurable under Controls -> Keybindings -> `ToggleAdvisor`) or click the **`Build Advisor [K]`** button in the top-right while the inventory is open.
+- **Open / Close Advisor UI:** Press **`K`** (configurable under Controls -> Keybindings -> `ToggleAdvisor`, works both in-game and while paused) or click the **`Boss Build Advisor`** icon button positioned next to `BossChecklist`'s book toggle while the inventory is open.
+- **Instant Search:** Click the search field and type directly to filter bosses (Terraria chat does not need to be open).
 - **Chat Commands:**
   - `/advisor` — toggle or open the advisor window
   - `/advisor next` — jump to the next undefeated boss stage
@@ -68,8 +70,14 @@ You can also run `/advisor dump` in chat and attach relevant snippets when openi
 
 Мод не использует захардкоженные таблицы под конкретные моды: при загрузке он сам анализирует установленную сборку (боссов, предметы, рецепты, дроп с врагов, условия покупки, бонусы сетов брони и классы урона — включая кастомные классы из модов) и подбирает актуальное снаряжение под каждый этап игры.
 
+### Основные возможности
+- **Расширенные подборки на каждый этап:** до **8 основных + 4 доп. оружий + 3 варианта боеприпасов**, **3 переключаемых варианта брони (`#1 / #2 / #3`)** с анализом бонуса сета, до **14 аксессуаров (основа + замены)** и **8 бафф-зелий + лечение**.
+- **Фильтр сложности добычи:** режимы **`Добыча: Комфорт` / `+Сложно` / `Всё RNG`** отсекают ультра-редкий фарм (вроде 0.2% дропа до первого босса), шиммер-скипы и редкие ящики, показывая сложность и причину для каждого предмета.
+- **Точная синхронизация с BossChecklist:** повторяет порядок, видимость записей и отметки побед прямо из `BossChecklist` (а без него — работает через автоматический сканер).
+
 ### Управление и команды
-- **`K`** (настраивается в управлении -> `ToggleAdvisor`) или кнопка **`Build Advisor [K]`** при открытом инвентаре — открыть/закрыть окно билдов.
+- **`K`** (настраивается в управлении -> `ToggleAdvisor`, работает и на паузе) или кнопка с иконкой **рядом с книгой BossChecklist** при открытом инвентаре — открыть/закрыть окно билдов.
+- **Мгновенный поиск:** строка поиска боссов работает сразу при клике мышью (открывать чат больше не нужно).
 - Чат-команды:
   - `/advisor` — открыть/скрыть интерфейс
   - `/advisor next` — показать билд на следующего непобеждённого босса

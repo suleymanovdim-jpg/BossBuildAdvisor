@@ -127,260 +127,295 @@ public sealed class BuildRecommender
 		return rec;
 	}
 
-	private List<(Item Item, ItemUnlockInfo Info)> CollectAvailableItems(float cutoff, bool allowHardmode, BuildQueryOptions options)
+	private List<(Item Item, ItemUnlockPath Path)> CollectAvailableItems(float cutoff, bool allowHardmode, BuildQueryOptions options)
 	{
-		var list = new List<(Item, ItemUnlockInfo)>();
+		var list = new List<(Item, ItemUnlockPath)>();
 
 		foreach ((int itemId, ItemUnlockInfo info) in _graph.Items)
 		{
-			if (info.Unobtainable || info.UnlockProgression > cutoff)
+			if (info.Unobtainable)
 				continue;
 
-			if (!allowHardmode && info.RequiresHardmode)
+			ItemUnlockPath path = info.GetPathFor(options.MaxDifficulty);
+			if (path == null || path.UnlockProgression > cutoff)
 				continue;
 
-			if (!options.IncludeTierEstimatedItems && info.Confidence == SourceConfidence.TierEstimated)
+			if (!allowHardmode && path.RequiresHardmode)
+				continue;
+
+			if (!options.IncludeTierEstimatedItems && path.Confidence == SourceConfidence.TierEstimated)
 				continue;
 
 			if (options.RespectWorldDifficulty)
 			{
-				if (info.ExpertOnly && !Main.expertMode)
+				if (path.ExpertOnly && !Main.expertMode)
 					continue;
-				if (info.MasterOnly && !Main.masterMode)
+				if (path.MasterOnly && !Main.masterMode)
 					continue;
-				if (info.ClassicOnly && Main.expertMode)
+				if (path.ClassicOnly && Main.expertMode)
 					continue;
 			}
 
 			if (options.RespectWorldEvil && !Main.drunkWorld)
 			{
-				if (info.CrimsonOnly && !WorldGen.crimson)
+				if (path.CrimsonOnly && !WorldGen.crimson)
 					continue;
-				if (info.CorruptOnly && WorldGen.crimson)
+				if (path.CorruptOnly && WorldGen.crimson)
 					continue;
 			}
 
 			if (ContentSamples.ItemsByType.TryGetValue(itemId, out Item item) && !item.IsAir && !item.vanity)
-				list.Add((item, info));
+				list.Add((item, path));
 		}
 
 		return list;
 	}
 
+	private static RecommendedSlotItem MakeSlot(int itemType, string role, float score, ItemUnlockPath path, string reason)
+	{
+		return new RecommendedSlotItem
+		{
+			ItemType = itemType,
+			RoleTag = role,
+			Score = score,
+			UnlockProgression = path.UnlockProgression,
+			SourceSummary = path.SourceSummary,
+			ReasonSummary = reason,
+			Confidence = path.Confidence,
+			SourceType = path.SourceType,
+			Difficulty = path.Difficulty,
+			DifficultyReason = path.DifficultyReason
+		};
+	}
+
 	private void SelectWeaponsAndAmmo(
 		BuildRecommendation rec,
-		List<(Item Item, ItemUnlockInfo Info)> available,
+		List<(Item Item, ItemUnlockPath Path)> available,
 		BossStageInfo targetStage,
 		DamageClass targetClass,
 		float cutoff)
 	{
 		var scoredPrimary = new List<(RecommendedSlotItem Slot, Item Item)>();
-		var scoredSupport = new List<(RecommendedSlotItem Slot, Item Item)>();
+		var scoredWhips = new List<(RecommendedSlotItem Slot, Item Item)>();
+		var scoredSentries = new List<(RecommendedSlotItem Slot, Item Item)>();
+		var scoredFreeMinions = new List<(RecommendedSlotItem Slot, Item Item)>();
 
-		foreach ((Item item, ItemUnlockInfo info) in available)
+		foreach ((Item item, ItemUnlockPath path) in available)
 		{
 			if (!IsCombatWeapon(item))
-				continue;
-
-			if (!MatchesWeaponClass(item, targetClass))
 				continue;
 
 			bool isWhip = item.shoot > ProjectileID.None && item.shoot < ProjectileID.Sets.IsAWhip.Length && ProjectileID.Sets.IsAWhip[item.shoot];
 			bool isSentry = item.sentry || item.DD2Summon;
 
-			float score = ScoreWeapon(item, info, cutoff, targetClass, isWhip, isSentry);
-			string role = isWhip ? "Whip" : isSentry ? "Sentry" : item.DamageType == DamageClass.Summon ? "Minion" : "Weapon";
-			string reason = BuildWeaponReason(item, info);
-
-			var slot = new RecommendedSlotItem
+			if (MatchesWeaponClass(item, targetClass))
 			{
-				ItemType = item.type,
-				RoleTag = role,
-				Score = score,
-				UnlockProgression = info.UnlockProgression,
-				SourceSummary = info.SourceSummary,
-				ReasonSummary = reason,
-				Confidence = info.Confidence
-			};
+				float score = ScoreWeapon(item, path, cutoff, targetClass, isWhip, isSentry);
+				string role = isWhip ? "Whip" : isSentry ? "Sentry" : item.DamageType == DamageClass.Summon ? "Minion" : "Weapon";
+				RecommendedSlotItem slot = MakeSlot(item.type, role, score, path, BuildWeaponReason(item));
 
-			if (targetClass == DamageClass.Summon && (isWhip || isSentry))
-				scoredSupport.Add((slot, item));
-			else
-				scoredPrimary.Add((slot, item));
+				if (targetClass == DamageClass.Summon && isWhip)
+					scoredWhips.Add((slot, item));
+				else if (targetClass == DamageClass.Summon && isSentry)
+					scoredSentries.Add((slot, item));
+				else
+					scoredPrimary.Add((slot, item));
+			}
+			else if (targetClass != DamageClass.Summon && item.DamageType == DamageClass.Summon && item.shoot > ProjectileID.None)
+			{
+				float score = ScoreWeapon(item, path, cutoff, DamageClass.Summon, false, isSentry);
+				string role = isSentry ? "Support Sentry" : "Free Minion";
+				string reason = isSentry ? $"Free sentry DPS ({item.damage} dmg)" : $"Free minion slot ({item.damage} dmg)";
+				RecommendedSlotItem slot = MakeSlot(item.type, role, score, path, reason);
+
+				if (isSentry)
+					scoredSentries.Add((slot, item));
+				else
+					scoredFreeMinions.Add((slot, item));
+			}
 		}
 
-		// Suppress weapons that are direct crafting ingredients of a higher-scoring available weapon
-		var topPrimary = PickTopDistinct(scoredPrimary, 3);
+		var topPrimary = PickTopDistinct(scoredPrimary, 8);
 		foreach ((RecommendedSlotItem slot, _) in topPrimary)
 			rec.PrimaryWeapons.Add(slot);
 
 		if (targetClass == DamageClass.Summon)
 		{
-			var bestWhip = scoredSupport.Where(x => x.Slot.RoleTag == "Whip").OrderByDescending(x => x.Slot.Score).FirstOrDefault();
-			var bestSentry = scoredSupport.Where(x => x.Slot.RoleTag == "Sentry").OrderByDescending(x => x.Slot.Score).FirstOrDefault();
-			if (bestWhip.Slot != null) rec.SupportWeapons.Add(bestWhip.Slot);
-			if (bestSentry.Slot != null) rec.SupportWeapons.Add(bestSentry.Slot);
+			foreach ((RecommendedSlotItem slot, _) in PickTopDistinct(scoredWhips, 2))
+				rec.SupportWeapons.Add(slot);
+			foreach ((RecommendedSlotItem slot, _) in PickTopDistinct(scoredSentries, 2))
+				rec.SupportWeapons.Add(slot);
 		}
 		else if (topPrimary.Count > 0)
 		{
-			// Offer 1 best summoner minion as free extra DPS support for non-summoner classes
-			var bestFreeMinion = available
-				.Where(x => IsCombatWeapon(x.Item) && x.Item.DamageType == DamageClass.Summon && !x.Item.sentry && x.Item.shoot > ProjectileID.None)
-				.Select(x => (
-					Slot: new RecommendedSlotItem
-					{
-						ItemType = x.Item.type,
-						RoleTag = "Free Minion",
-						Score = ScoreWeapon(x.Item, x.Info, cutoff, DamageClass.Summon, false, false),
-						UnlockProgression = x.Info.UnlockProgression,
-						SourceSummary = x.Info.SourceSummary,
-						ReasonSummary = $"Free extra minion slot ({x.Item.damage} dmg)",
-						Confidence = x.Info.Confidence
-					},
-					Item: x.Item))
-				.OrderByDescending(x => x.Slot.Score)
-				.FirstOrDefault();
-
-			if (bestFreeMinion.Slot != null)
-				rec.SupportWeapons.Add(bestFreeMinion.Slot);
+			foreach ((RecommendedSlotItem slot, _) in PickTopDistinct(scoredFreeMinions, 2))
+				rec.SupportWeapons.Add(slot);
+			foreach ((RecommendedSlotItem slot, _) in PickTopDistinct(scoredSentries, 2))
+				rec.SupportWeapons.Add(slot);
 		}
 
-		// Recommend matching ammo if top weapon uses ammo
+		// Recommend top matching ammo types for primary weapons that consume ammo
 		Item primaryAmmoUser = topPrimary.Select(x => x.Item).FirstOrDefault(x => x.useAmmo > AmmoID.None);
 		if (primaryAmmoUser != null)
 		{
-			var bestAmmo = available
+			var ammoScored = available
 				.Where(x => x.Item.ammo == primaryAmmoUser.useAmmo)
-				.Select(x => new RecommendedSlotItem
-				{
-					ItemType = x.Item.type,
-					RoleTag = "Ammo",
-					Score = x.Item.damage * 4f + NormalizeRarity(x.Item.rare) * 6f + StageRecencyBonus(x.Info.UnlockProgression, cutoff),
-					UnlockProgression = x.Info.UnlockProgression,
-					SourceSummary = x.Info.SourceSummary,
-					ReasonSummary = $"{x.Item.damage} dmg ammo",
-					Confidence = x.Info.Confidence
-				})
-				.OrderByDescending(x => x.Score)
-				.FirstOrDefault();
+				.Select(x => (
+					Slot: MakeSlot(
+						x.Item.type,
+						"Ammo",
+						x.Item.damage * 4f + NormalizeRarity(x.Item.rare) * 6f + StageRecencyBonus(x.Path.UnlockProgression, cutoff) + DifficultyBias(x.Path.Difficulty),
+						x.Path,
+						$"{x.Item.damage} dmg ammo"),
+					x.Item))
+				.OrderByDescending(x => x.Slot.Score)
+				.ToList();
 
-			rec.RecommendedAmmo = bestAmmo;
+			foreach ((RecommendedSlotItem ammoSlot, _) in PickTopDistinct(ammoScored, 3))
+				rec.AmmoOptions.Add(ammoSlot);
+
+			rec.RecommendedAmmo = rec.AmmoOptions.FirstOrDefault();
 		}
 	}
 
 	private void SelectArmor(
 		BuildRecommendation rec,
-		List<(Item Item, ItemUnlockInfo Info)> available,
+		List<(Item Item, ItemUnlockPath Path)> available,
 		BossStageInfo targetStage,
 		DamageClass targetClass,
 		float cutoff,
 		bool allowHardmode,
 		BuildQueryOptions options)
 	{
-		var availLookup = new Dictionary<int, ItemUnlockInfo>(available.Count);
-		foreach ((Item availItem, ItemUnlockInfo availInfo) in available)
-			availLookup.TryAdd(availItem.type, availInfo);
+		var availLookup = new Dictionary<int, ItemUnlockPath>(available.Count);
+		foreach ((Item availItem, ItemUnlockPath availPath) in available)
+			availLookup.TryAdd(availItem.type, availPath);
 
-		ArmorSetCandidate bestSet = null;
+		// Keep highest-scoring class helmet variant per distinct (BodyType, LegsType) so one set doesn't hog all 3 armor tabs
+		var bestByBodyLegs = new Dictionary<(int Body, int Legs), ArmorSetCandidate>();
 		foreach (ArmorSetDefinition set in _armorSets.Sets)
 		{
-			if (!availLookup.TryGetValue(set.HeadType, out ItemUnlockInfo hInfo)
-				|| !availLookup.TryGetValue(set.BodyType, out ItemUnlockInfo bInfo)
-				|| !availLookup.TryGetValue(set.LegsType, out ItemUnlockInfo lInfo))
+			if (!availLookup.TryGetValue(set.HeadType, out ItemUnlockPath hPath)
+				|| !availLookup.TryGetValue(set.BodyType, out ItemUnlockPath bPath)
+				|| !availLookup.TryGetValue(set.LegsType, out ItemUnlockPath lPath))
 				continue;
 
-			float maxUnlock = Math.Max(hInfo.UnlockProgression, Math.Max(bInfo.UnlockProgression, lInfo.UnlockProgression));
-			float setScore = ScoreArmorSet(set, maxUnlock, cutoff, targetClass);
+			float maxUnlock = Math.Max(hPath.UnlockProgression, Math.Max(bPath.UnlockProgression, lPath.UnlockProgression));
+			(ObtainabilityDifficulty setDiff, string diffReason) = CombinePieceDifficulty(hPath, bPath, lPath);
+			float setScore = ScoreArmorSet(set, maxUnlock, cutoff, targetClass, setDiff);
 
-			if (bestSet == null || setScore > bestSet.Score)
+			var candidate = new ArmorSetCandidate
 			{
-				bestSet = new ArmorSetCandidate
-				{
-					HeadType = set.HeadType,
-					BodyType = set.BodyType,
-					LegsType = set.LegsType,
-					TotalDefense = set.TotalDefense,
-					Score = setScore,
-					UnlockProgression = maxUnlock,
-					IsTrueSet = true,
-					SetBonusSummary = set.SetBonusText,
-					ModName = set.ModName
-				};
-			}
+				HeadType = set.HeadType,
+				BodyType = set.BodyType,
+				LegsType = set.LegsType,
+				TotalDefense = set.TotalDefense,
+				Score = setScore,
+				UnlockProgression = maxUnlock,
+				IsTrueSet = true,
+				SetBonusSummary = set.SetBonusText,
+				ModName = set.ModName,
+				Difficulty = setDiff,
+				DifficultyReason = diffReason,
+				HeadSlot = MakeArmorPieceSlot(set.HeadType, "Head", hPath, setScore / 3f),
+				BodySlot = MakeArmorPieceSlot(set.BodyType, "Body", bPath, setScore / 3f),
+				LegsSlot = MakeArmorPieceSlot(set.LegsType, "Legs", lPath, setScore / 3f)
+			};
+
+			var key = (set.BodyType, set.LegsType);
+			if (!bestByBodyLegs.TryGetValue(key, out ArmorSetCandidate existing) || candidate.Score > existing.Score)
+				bestByBodyLegs[key] = candidate;
 		}
 
-		// Also compute mixed best-in-slot armor as fallback or comparison (using fair 1x rarity + 1x recency parity)
+		var candidates = bestByBodyLegs.Values
+			.OrderByDescending(c => c.Score)
+			.ToList();
+
+		// Evaluate mixed best-in-slot armor as an extra candidate if valid and competitive
 		RecommendedSlotItem bestHead = PickBestArmorPiece(available, x => x.headSlot >= 0, "Head", cutoff, targetClass);
 		RecommendedSlotItem bestBody = PickBestArmorPiece(available, x => x.bodySlot >= 0, "Body", cutoff, targetClass);
 		RecommendedSlotItem bestLegs = PickBestArmorPiece(available, x => x.legSlot >= 0, "Legs", cutoff, targetClass);
 
-		float mixedFairScore = 0f;
 		if (bestHead != null && bestBody != null && bestLegs != null)
 		{
-			Item ih = ContentSamples.ItemsByType[bestHead.ItemType];
-			Item ib = ContentSamples.ItemsByType[bestBody.ItemType];
-			Item il = ContentSamples.ItemsByType[bestLegs.ItemType];
-			int totalDef = ih.defense + ib.defense + il.defense;
-			float defWeight = cutoff <= _catalog.WallOfFleshProgression ? 2.4f : 1.5f;
-			float avgRare = (ih.rare + ib.rare + il.rare) / 3f;
-			float maxUnlock = Math.Max(bestHead.UnlockProgression, Math.Max(bestBody.UnlockProgression, bestLegs.UnlockProgression));
+			bool alreadyExactSet = candidates.Any(c =>
+				c.HeadType == bestHead.ItemType && c.BodyType == bestBody.ItemType && c.LegsType == bestLegs.ItemType);
 
-			float sumAff = 0f;
-			float sumGen = 0f;
-			foreach (int id in new[] { ih.type, ib.type, il.type })
+			if (!alreadyExactSet)
 			{
-				if (_graph.Semantics.TryGetValue(id, out var sp))
+				Item ih = ContentSamples.ItemsByType[bestHead.ItemType];
+				Item ib = ContentSamples.ItemsByType[bestBody.ItemType];
+				Item il = ContentSamples.ItemsByType[bestLegs.ItemType];
+				int totalDef = ih.defense + ib.defense + il.defense;
+				float defWeight = cutoff <= _catalog.WallOfFleshProgression ? 2.4f : 1.5f;
+				float avgRare = (ih.rare + ib.rare + il.rare) / 3f;
+				float maxUnlock = Math.Max(bestHead.UnlockProgression, Math.Max(bestBody.UnlockProgression, bestLegs.UnlockProgression));
+				ItemUnlockPath hP = availLookup[bestHead.ItemType];
+				ItemUnlockPath bP = availLookup[bestBody.ItemType];
+				ItemUnlockPath lP = availLookup[bestLegs.ItemType];
+				(ObtainabilityDifficulty mixDiff, string mixReason) = CombinePieceDifficulty(hP, bP, lP);
+
+				float sumAff = 0f;
+				float sumGen = 0f;
+				foreach (int id in new[] { ih.type, ib.type, il.type })
 				{
-					sumAff += sp.ClassAffinityScores.GetValueOrDefault(targetClass.Type);
-					sumGen += sp.GenericBonusScore;
+					if (_graph.Semantics.TryGetValue(id, out var sp))
+					{
+						sumAff += sp.ClassAffinityScores.GetValueOrDefault(targetClass.Type);
+						sumGen += sp.GenericBonusScore;
+					}
+				}
+
+				float mixedFairScore = totalDef * defWeight + sumAff * 1.4f + sumGen * 0.8f
+					+ NormalizeRarity((int)Math.Round(avgRare)) * 10f
+					+ StageRecencyBonus(maxUnlock, cutoff)
+					+ DifficultyBias(mixDiff);
+
+				if (candidates.Count == 0 || mixedFairScore > candidates[0].Score * 1.10f)
+				{
+					candidates.Insert(0, new ArmorSetCandidate
+					{
+						HeadType = bestHead.ItemType,
+						BodyType = bestBody.ItemType,
+						LegsType = bestLegs.ItemType,
+						TotalDefense = totalDef,
+						Score = mixedFairScore,
+						UnlockProgression = maxUnlock,
+						IsTrueSet = false,
+						ModName = "Mixed",
+						Difficulty = mixDiff,
+						DifficultyReason = mixReason,
+						HeadSlot = bestHead,
+						BodySlot = bestBody,
+						LegsSlot = bestLegs
+					});
 				}
 			}
-
-			mixedFairScore = totalDef * defWeight + sumAff * 1.4f + sumGen * 0.8f
-				+ NormalizeRarity((int)Math.Round(avgRare)) * 10f
-				+ StageRecencyBonus(maxUnlock, cutoff);
 		}
 
-		if (bestSet != null && (bestHead == null || bestBody == null || bestLegs == null || bestSet.Score >= mixedFairScore * 0.90f))
-		{
-			rec.ArmorSet = bestSet;
-			rec.HeadSlot = MakeArmorPieceSlot(bestSet.HeadType, "Head", availLookup[bestSet.HeadType], bestSet.Score / 3f);
-			rec.BodySlot = MakeArmorPieceSlot(bestSet.BodyType, "Body", availLookup[bestSet.BodyType], bestSet.Score / 3f);
-			rec.LegsSlot = MakeArmorPieceSlot(bestSet.LegsType, "Legs", availLookup[bestSet.LegsType], bestSet.Score / 3f);
-		}
-		else if (bestHead != null && bestBody != null && bestLegs != null)
-		{
-			int def = ContentSamples.ItemsByType[bestHead.ItemType].defense
-				+ ContentSamples.ItemsByType[bestBody.ItemType].defense
-				+ ContentSamples.ItemsByType[bestLegs.ItemType].defense;
+		foreach (ArmorSetCandidate opt in candidates.Take(3))
+			rec.ArmorOptions.Add(opt);
 
-			rec.ArmorSet = new ArmorSetCandidate
-			{
-				HeadType = bestHead.ItemType,
-				BodyType = bestBody.ItemType,
-				LegsType = bestLegs.ItemType,
-				TotalDefense = def,
-				Score = mixedFairScore,
-				UnlockProgression = Math.Max(bestHead.UnlockProgression, Math.Max(bestBody.UnlockProgression, bestLegs.UnlockProgression)),
-				IsTrueSet = false,
-				ModName = "Mixed"
-			};
-			rec.HeadSlot = bestHead;
-			rec.BodySlot = bestBody;
-			rec.LegsSlot = bestLegs;
+		ArmorSetCandidate primary = rec.ArmorOptions.FirstOrDefault();
+		if (primary != null)
+		{
+			rec.ArmorSet = primary;
+			rec.HeadSlot = primary.HeadSlot;
+			rec.BodySlot = primary.BodySlot;
+			rec.LegsSlot = primary.LegsSlot;
 		}
 	}
 
 	private void SelectAccessories(
 		BuildRecommendation rec,
-		List<(Item Item, ItemUnlockInfo Info)> available,
+		List<(Item Item, ItemUnlockPath Path)> available,
 		BossStageInfo targetStage,
 		DamageClass targetClass,
 		float cutoff)
 	{
 		var candidates = new List<(RecommendedSlotItem Slot, ItemSemanticProfile Profile)>();
 
-		foreach ((Item item, ItemUnlockInfo info) in available)
+		foreach ((Item item, ItemUnlockPath path) in available)
 		{
 			if (!item.accessory)
 				continue;
@@ -389,22 +424,11 @@ public sealed class BuildRecommender
 				? p
 				: ItemTooltipAnalyzer.Analyze(item);
 
-			float score = ScoreAccessory(item, info, prof, cutoff, targetClass, out string role, out string reason);
+			float score = ScoreAccessory(item, path, prof, cutoff, targetClass, out string role, out string reason);
 			if (score <= 5f)
 				continue;
 
-			candidates.Add((
-				new RecommendedSlotItem
-				{
-					ItemType = item.type,
-					RoleTag = role,
-					Score = score,
-					UnlockProgression = info.UnlockProgression,
-					SourceSummary = info.SourceSummary,
-					ReasonSummary = reason,
-					Confidence = info.Confidence
-				},
-				prof));
+			candidates.Add((MakeSlot(item.type, role, score, path, reason), prof));
 		}
 
 		// Ensure crafted upgrades always outrank their available precursors so precursor suppression triggers cleanly
@@ -426,7 +450,6 @@ public sealed class BuildRecommender
 					if (!byId.TryGetValue(nextId, out int j))
 						continue;
 
-					// Only boost upgrade if it isn't penalized off-class relative to precursor
 					float srcAff = candidates[i].Profile.ClassAffinityScores.GetValueOrDefault(targetClass.Type);
 					float dstAff = candidates[j].Profile.ClassAffinityScores.GetValueOrDefault(targetClass.Type);
 					if (dstAff + 4f < srcAff && dstAff <= 0f && candidates[j].Profile.ClassAffinityScores.Count > 0)
@@ -443,14 +466,16 @@ public sealed class BuildRecommender
 							UnlockProgression = cur.UnlockProgression,
 							SourceSummary = cur.SourceSummary,
 							ReasonSummary = cur.ReasonSummary,
-							Confidence = cur.Confidence
+							Confidence = cur.Confidence,
+							SourceType = cur.SourceType,
+							Difficulty = cur.Difficulty,
+							DifficultyReason = cur.DifficultyReason
 						}, candidates[j].Profile);
 					}
 				}
 			}
 		}
 
-		// Sort descending and prune direct recipe precursors when an upgrade is also high-scoring
 		var sorted = candidates.OrderByDescending(c => c.Slot.Score).ToList();
 		var pickedIds = new HashSet<int>();
 
@@ -480,33 +505,51 @@ public sealed class BuildRecommender
 			if (prof.IsMobilityBoots) bootsCount++;
 			if (prof.IsDashOrDodge) dashCount++;
 		}
+
+		// Populate up to 14 total accessories with practical swaps/alternatives
+		int altWings = 0;
+		int altBoots = 0;
+		int altDash = 0;
+		foreach ((RecommendedSlotItem slot, ItemSemanticProfile prof) in sorted)
+		{
+			if (rec.Accessories.Count + rec.AltAccessories.Count >= 14)
+				break;
+
+			if (IsSupersededByAlreadyPicked(slot.ItemType, pickedIds))
+				continue;
+
+			if (prof.IsWings && altWings >= 2)
+				continue;
+			if (prof.IsMobilityBoots && !prof.IsWings && altBoots >= 2)
+				continue;
+			if (prof.IsDashOrDodge && !prof.IsWings && !prof.IsMobilityBoots && altDash >= 2)
+				continue;
+
+			rec.AltAccessories.Add(slot);
+			pickedIds.Add(slot.ItemType);
+
+			if (prof.IsWings) altWings++;
+			if (prof.IsMobilityBoots) altBoots++;
+			if (prof.IsDashOrDodge) altDash++;
+		}
 	}
 
 	private void SelectPotions(
 		BuildRecommendation rec,
-		List<(Item Item, ItemUnlockInfo Info)> available,
+		List<(Item Item, ItemUnlockPath Path)> available,
 		DamageClass targetClass)
 	{
 		rec.HealingPotion = available
 			.Where(x => x.Item.potion && x.Item.healLife > 0 && x.Item.consumable)
 			.OrderByDescending(x => x.Item.healLife)
-			.ThenByDescending(x => x.Info.UnlockProgression)
-			.Select(x => new RecommendedSlotItem
-			{
-				ItemType = x.Item.type,
-				RoleTag = "Healing",
-				Score = x.Item.healLife,
-				UnlockProgression = x.Info.UnlockProgression,
-				SourceSummary = x.Info.SourceSummary,
-				ReasonSummary = $"+{x.Item.healLife} HP",
-				Confidence = x.Info.Confidence
-			})
+			.ThenByDescending(x => x.Path.UnlockProgression)
+			.Select(x => MakeSlot(x.Item.type, "Healing", x.Item.healLife, x.Path, $"+{x.Item.healLife} HP"))
 			.FirstOrDefault();
 
 		var buffCandidates = new List<RecommendedSlotItem>();
 		var seenBuffTypes = new HashSet<int>();
 
-		foreach ((Item item, ItemUnlockInfo info) in available)
+		foreach ((Item item, ItemUnlockPath path) in available)
 		{
 			if (item.buffType <= 0 || item.buffTime <= 0 || !item.consumable)
 				continue;
@@ -519,7 +562,7 @@ public sealed class BuildRecommender
 				continue;
 
 			float classAff = prof.ClassAffinityScores.GetValueOrDefault(targetClass.Type);
-			float score = 20f + prof.GenericBonusScore + classAff * 1.4f + (item.buffTime / 3600f);
+			float score = 20f + prof.GenericBonusScore + classAff * 1.4f + (item.buffTime / 3600f) + DifficultyBias(path.Difficulty) * 0.4f;
 
 			if (item.buffType is BuffID.Ironskin or BuffID.Regeneration or BuffID.Endurance or BuffID.Swiftness or BuffID.Lifeforce or BuffID.Rage or BuffID.Wrath)
 				score += 22f;
@@ -527,21 +570,12 @@ public sealed class BuildRecommender
 			if (item.buffType is BuffID.WellFed or BuffID.WellFed2 or BuffID.WellFed3)
 				score += (item.buffType == BuffID.WellFed3 ? 28f : item.buffType == BuffID.WellFed2 ? 20f : 12f);
 
-			buffCandidates.Add(new RecommendedSlotItem
-			{
-				ItemType = item.type,
-				RoleTag = "Buff",
-				Score = score,
-				UnlockProgression = info.UnlockProgression,
-				SourceSummary = info.SourceSummary,
-				ReasonSummary = prof.CombinedTooltipText,
-				Confidence = info.Confidence
-			});
+			buffCandidates.Add(MakeSlot(item.type, "Buff", score, path, prof.CombinedTooltipText));
 		}
 
 		foreach (RecommendedSlotItem pot in buffCandidates.OrderByDescending(p => p.Score))
 		{
-			if (rec.BuffPotions.Count >= 6)
+			if (rec.BuffPotions.Count >= 8)
 				break;
 
 			int buffType = ContentSamples.ItemsByType[pot.ItemType].buffType;
@@ -588,7 +622,7 @@ public sealed class BuildRecommender
 
 	private static float ScoreWeapon(
 		Item item,
-		ItemUnlockInfo info,
+		ItemUnlockPath path,
 		float cutoff,
 		DamageClass targetClass,
 		bool isWhip,
@@ -611,22 +645,22 @@ public sealed class BuildRecommender
 		float dpsScore = (float)(Math.Log10(Math.Max(10.0, rawDps)) * 42.0);
 		float rarityScore = NormalizeRarity(item.rare) * 11f;
 		float valueScore = (float)(Math.Log10(Math.Max(100, item.value)) * 4.5);
-		float recency = StageRecencyBonus(info.UnlockProgression, cutoff);
+		float recency = StageRecencyBonus(path.UnlockProgression, cutoff);
 
-		float bonus = 0f;
+		float bonus = DifficultyBias(path.Difficulty);
 		if (item.shoot > ProjectileID.None) bonus += 16f;
 		if (item.autoReuse || item.channel) bonus += 6f;
 		if (item.noMelee && item.shoot > ProjectileID.None) bonus += 5f;
-		if (info.SourceType == ItemSourceType.BossDrop) bonus += 8f;
-		if (info.Confidence == SourceConfidence.TierEstimated) bonus -= 18f;
-		if (item.damage >= 500 && info.Confidence == SourceConfidence.TierEstimated) bonus -= 80f;
+		if (path.SourceType == ItemSourceType.BossDrop) bonus += 8f;
+		if (path.Confidence == SourceConfidence.TierEstimated) bonus -= 18f;
+		if (item.damage >= 500 && path.Confidence == SourceConfidence.TierEstimated) bonus -= 80f;
 		if (item.DamageType == targetClass) bonus += 5f;
 		if (isWhip || isSentry) bonus += 6f;
 
 		return dpsScore + rarityScore + valueScore + recency + bonus;
 	}
 
-	private float ScoreArmorSet(ArmorSetDefinition set, float maxUnlock, float cutoff, DamageClass targetClass)
+	private float ScoreArmorSet(ArmorSetDefinition set, float maxUnlock, float cutoff, DamageClass targetClass, ObtainabilityDifficulty difficulty)
 	{
 		float defWeight = cutoff <= _catalog.WallOfFleshProgression ? 2.4f : 1.5f;
 		float score = set.TotalDefense * defWeight;
@@ -635,6 +669,7 @@ public sealed class BuildRecommender
 		score += classAff * 1.8f;
 		score += set.CombinedProfile.GenericBonusScore * 0.9f;
 		score += StageRecencyBonus(maxUnlock, cutoff);
+		score += DifficultyBias(difficulty);
 
 		// Average rarity of pieces
 		int rHead = ContentSamples.ItemsByType[set.HeadType].rare;
@@ -651,14 +686,14 @@ public sealed class BuildRecommender
 	}
 
 	private RecommendedSlotItem PickBestArmorPiece(
-		List<(Item Item, ItemUnlockInfo Info)> available,
+		List<(Item Item, ItemUnlockPath Path)> available,
 		Func<Item, bool> slotPredicate,
 		string role,
 		float cutoff,
 		DamageClass targetClass)
 	{
 		RecommendedSlotItem best = null;
-		foreach ((Item item, ItemUnlockInfo info) in available)
+		foreach ((Item item, ItemUnlockPath path) in available)
 		{
 			if (!slotPredicate(item))
 				continue;
@@ -670,34 +705,25 @@ public sealed class BuildRecommender
 			float classAff = prof.ClassAffinityScores.GetValueOrDefault(targetClass.Type);
 			float defWeight = cutoff <= _catalog.WallOfFleshProgression ? 2.2f : 1.4f;
 			float score = item.defense * defWeight + classAff * 1.4f + prof.GenericBonusScore * 0.8f
-				+ NormalizeRarity(item.rare) * 8f + StageRecencyBonus(info.UnlockProgression, cutoff);
+				+ NormalizeRarity(item.rare) * 8f + StageRecencyBonus(path.UnlockProgression, cutoff) + DifficultyBias(path.Difficulty);
 
 			if (best == null || score > best.Score)
 			{
-				best = MakeArmorPieceSlot(item.type, role, info, score);
+				best = MakeArmorPieceSlot(item.type, role, path, score);
 			}
 		}
 		return best;
 	}
 
-	private static RecommendedSlotItem MakeArmorPieceSlot(int itemType, string role, ItemUnlockInfo info, float score)
+	private static RecommendedSlotItem MakeArmorPieceSlot(int itemType, string role, ItemUnlockPath path, float score)
 	{
 		Item item = ContentSamples.ItemsByType[itemType];
-		return new RecommendedSlotItem
-		{
-			ItemType = itemType,
-			RoleTag = role,
-			Score = score,
-			UnlockProgression = info.UnlockProgression,
-			SourceSummary = info.SourceSummary,
-			ReasonSummary = $"{item.defense} def | {ItemTooltipAnalyzer.GetTooltipText(item)}",
-			Confidence = info.Confidence
-		};
+		return MakeSlot(itemType, role, score, path, $"{item.defense} def | {ItemTooltipAnalyzer.GetTooltipText(item)}");
 	}
 
 	private static float ScoreAccessory(
 		Item item,
-		ItemUnlockInfo info,
+		ItemUnlockPath path,
 		ItemSemanticProfile prof,
 		float cutoff,
 		DamageClass targetClass,
@@ -723,8 +749,9 @@ public sealed class BuildRecommender
 
 		float score = NormalizeRarity(item.rare) * 7.5f
 			+ (float)Math.Log10(Math.Max(100, item.value)) * 3f
-			+ StageRecencyBonus(info.UnlockProgression, cutoff) * 0.7f
-			+ item.defense * 2.5f;
+			+ StageRecencyBonus(path.UnlockProgression, cutoff) * 0.7f
+			+ item.defense * 2.5f
+			+ DifficultyBias(path.Difficulty);
 
 		score += classAff * 1.7f;
 		score += prof.GenericBonusScore * 1.05f;
@@ -767,7 +794,7 @@ public sealed class BuildRecommender
 			role = "Combat Utility";
 		}
 
-		if (info.Confidence == SourceConfidence.TierEstimated)
+		if (path.Confidence == SourceConfidence.TierEstimated)
 			score -= 8f;
 
 		reason = string.IsNullOrWhiteSpace(prof.CombinedTooltipText)
@@ -775,6 +802,30 @@ public sealed class BuildRecommender
 			: prof.CombinedTooltipText;
 
 		return score;
+	}
+
+	private static (ObtainabilityDifficulty Diff, string Reason) CombinePieceDifficulty(
+		ItemUnlockPath h,
+		ItemUnlockPath b,
+		ItemUnlockPath l)
+	{
+		ItemUnlockPath hardest = h;
+		if (b.Difficulty > hardest.Difficulty || (b.Difficulty == hardest.Difficulty && b.UnlockProgression > hardest.UnlockProgression))
+			hardest = b;
+		if (l.Difficulty > hardest.Difficulty || (l.Difficulty == hardest.Difficulty && l.UnlockProgression > hardest.UnlockProgression))
+			hardest = l;
+		return (hardest.Difficulty, hardest.DifficultyReason);
+	}
+
+	private static float DifficultyBias(ObtainabilityDifficulty difficulty)
+	{
+		return difficulty switch
+		{
+			ObtainabilityDifficulty.Easy => 4f,
+			ObtainabilityDifficulty.Medium => 1f,
+			ObtainabilityDifficulty.Hard => -5f,
+			_ => -14f
+		};
 	}
 
 	private List<(RecommendedSlotItem Slot, Item Item)> PickTopDistinct(
@@ -853,7 +904,7 @@ public sealed class BuildRecommender
 		return 0f;
 	}
 
-	private static string BuildWeaponReason(Item item, ItemUnlockInfo info)
+	private static string BuildWeaponReason(Item item)
 	{
 		float useSec = Math.Max(1, item.useTime) / 60f;
 		int approxDps = (int)Math.Round(item.damage / useSec);

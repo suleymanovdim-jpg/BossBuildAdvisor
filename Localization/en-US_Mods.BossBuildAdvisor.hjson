@@ -11,10 +11,19 @@ UI: {
 	IncludeEstimatedOff: Tier-Est: OFF
 	IncludeMinibossesOn: Events/Mini: ON
 	IncludeMinibossesOff: Events/Mini: OFF
+	DifficultyComfortable: Loot: Comfort
+	DifficultyIncludeHard: Loot: +Hard
+	DifficultyAll: Loot: All RNG
+	DifficultyEasy: Easy
+	DifficultyMedium: Medium
+	DifficultyHard: Hard
+	DifficultyVeryHard: Hardcore Farm
+	DifficultyLine: Difficulty: {0} ({1})
+	ArmorOptionTab: "#{0}"
 	SearchPlaceholder: Search boss...
-	SectionWeapons: Weapons & Ammo
-	SectionArmor: Armor Set
-	SectionAccessories: Accessories
+	SectionWeapons: Weapons & Ammo ({0})
+	SectionArmor: Armor Sets
+	SectionAccessories: Accessories ({0} core + {1} alt)
 	SectionPotions: Potions & Buffs
 	SectionDetails: Selected Item Details
 	BossDefeated: Defeated
@@ -23,13 +32,45 @@ UI: {
 	ConfidenceVerified: Verified Source
 	ConfidenceCrafted: Crafted Chain
 	ConfidenceTierEstimated: Tier Estimated
-	NoArmorSetBonus: Mixed best-in-slot armor (no full set matched)
+	NoArmorSetBonus: Mixed best-in-slot armor
 	ClickItemHint: Hover for stats, click an item to inspect recipe / drop source.
-	TotalDefense: Total Defense: {0}
+	TotalDefense: Def: {0}
 	ModOrigin: Mod: {0}
 	UnlockStage: Available from stage <= {0:0.0} ({1})
 	SourcePrefix: How to get: {0}
 	ReasonsPrefix: Why picked: {0}
 	OpenButtonTooltip: Open Boss Build Advisor
-	SlotsHeader: Accessory Slots: {0}
+	SlotsHeader: Slots: {0}+{1}
+}
+
+Loot: {
+	BossNamedDrop: Drops from {0}
+	UnavailableBoss: Unavailable / secret event ({0})
+	HiddenEvent: Hidden / optional boss ({0})
+	BossDrop: Boss drop
+	BossRareDrop: Rare boss drop ({0:0.#}%)
+	RareDrop: Rare drop ({0:0.#}%)
+	VeryRareDrop: Very rare farm ({0:0.#}%)
+	ChanceDrop: Drop chance ({0:0.#}%)
+	CommonDrop: Common drop ({0:0.#}%)
+	DropGeneric: Enemy drop
+	LockBox: Dungeon / Shadow Key
+	DungeonCrate: Dungeon fishing crate
+	HardmodeCrate: Hardmode fishing crate
+	BasicCrate: Basic fishing crate
+	BiomeCrate: Rare biome/gold crate (RNG)
+	ShopBuy: Bought from {0}
+	TravellingShop: Travelling Merchant (RNG stock)
+	ShopExpensiveEarly: Expensive early purchase ({0})
+	ShopMidCost: Pricey shop item ({0})
+	UndergroundJungle: Underground Jungle
+	UndergroundDesert: Underground Desert / Extractinator
+	UnderworldEarly: Underworld (early hellevator)
+	UndergroundSnow: Underground Snow
+	PyramidRare: Rare Pyramid chest
+	WorldChest: Chests / world exploration
+	WorldGather: Basic gathering / mining
+	WorkbenchCraft: Crafting station
+	ShimmerTransform: Shimmer transmutation
+	TierEstimate: Estimated by tier (mod source hidden)
 }

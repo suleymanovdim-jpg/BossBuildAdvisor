@@ -73,14 +73,16 @@ public sealed class AdvisorItemSlot : UIElement
 	private readonly Action<RecommendedSlotItem> _onSelect;
 	private bool _selected;
 	private readonly string _shortTag;
+	private readonly bool _isAlternative;
 
 	public RecommendedSlotItem SlotData => _slotData;
 
-	public AdvisorItemSlot(RecommendedSlotItem slotData, string shortTag, float size, Action<RecommendedSlotItem> onSelect)
+	public AdvisorItemSlot(RecommendedSlotItem slotData, string shortTag, float size, Action<RecommendedSlotItem> onSelect, bool isAlternative = false)
 	{
 		_slotData = slotData;
 		_shortTag = shortTag ?? string.Empty;
 		_onSelect = onSelect;
+		_isAlternative = isAlternative;
 		Width.Set(size, 0f);
 		Height.Set(size, 0f);
 	}
@@ -105,9 +107,11 @@ public sealed class AdvisorItemSlot : UIElement
 		Texture2D backTex = TextureAssets.InventoryBack9.Value;
 		Color bgTint = _selected
 			? new Color(255, 230, 140)
-			: (_slotData?.Confidence == SourceConfidence.TierEstimated
-				? new Color(225, 210, 190)
-				: Color.White);
+			: (_isAlternative
+				? new Color(170, 192, 220, 215)
+				: (_slotData?.Confidence == SourceConfidence.TierEstimated
+					? new Color(225, 210, 190)
+					: Color.White));
 
 		spriteBatch.Draw(backTex, dims.ToRectangle(), bgTint);
 
@@ -130,10 +134,23 @@ public sealed class AdvisorItemSlot : UIElement
 				_shortTag,
 				dims.X + 4f,
 				dims.Y + dims.Height - 15f,
-				Color.LightGoldenrodYellow,
+				_isAlternative ? new Color(165, 225, 255) : Color.LightGoldenrodYellow,
 				Color.Black,
 				Vector2.Zero,
-				0.65f);
+				0.62f);
+		}
+
+		// Top-right obtainability badge dot (Orange = Hard, Red = VeryHard)
+		if (_slotData.Difficulty >= ObtainabilityDifficulty.Hard)
+		{
+			Texture2D pixel = TextureAssets.MagicPixel.Value;
+			Color pipColor = _slotData.Difficulty == ObtainabilityDifficulty.VeryHard
+				? new Color(255, 85, 85)
+				: new Color(255, 180, 65);
+			var borderRect = new Rectangle((int)(dims.X + dims.Width - 10f), (int)(dims.Y + 4f), 6, 6);
+			var fillRect = new Rectangle(borderRect.X + 1, borderRect.Y + 1, 4, 4);
+			spriteBatch.Draw(pixel, borderRect, Color.Black);
+			spriteBatch.Draw(pixel, fillRect, pipColor);
 		}
 
 		if (IsMouseHovering)
@@ -249,21 +266,35 @@ public sealed class BossSearchBox : UIPanel
 		Append(_display);
 	}
 
+	public bool IsFocused => _focused;
+
 	public void ClearFocus()
 	{
 		if (_focused)
 		{
 			_focused = false;
-			Main.blockInput = false;
+			if (ReferenceEquals(Main.CurrentInputTextTakerOverride, this))
+				Main.CurrentInputTextTakerOverride = null;
 			BorderColor = new Color(60, 76, 120);
 		}
+	}
+
+	public void Focus()
+	{
+		if (!_focused)
+		{
+			_focused = true;
+			Main.clrInput();
+			BorderColor = new Color(245, 210, 95);
+		}
+		Terraria.GameInput.PlayerInput.WritingText = true;
+		Main.CurrentInputTextTakerOverride = this;
 	}
 
 	public override void LeftClick(UIMouseEvent evt)
 	{
 		base.LeftClick(evt);
-		_focused = true;
-		BorderColor = new Color(245, 210, 95);
+		Focus();
 		SoundEngine.PlaySound(SoundID.MenuTick);
 	}
 
@@ -277,21 +308,40 @@ public sealed class BossSearchBox : UIPanel
 		if (_focused)
 		{
 			Terraria.GameInput.PlayerInput.WritingText = true;
-			Main.instance.HandleIME();
-			string updated = Main.GetInputText(_text);
-			if (updated != _text)
-			{
-				_text = updated;
-				_onChanged?.Invoke(_text);
-			}
-			Main.blockInput = true;
+			Main.CurrentInputTextTakerOverride = this;
 		}
 
+		bool blinkingOn = _focused && ((int)(Main.GlobalTimeWrappedHourly * 2.5f) % 2 == 0);
 		string shown = string.IsNullOrEmpty(_text)
-			? (_focused ? "|" : _placeholder)
-			: (_focused ? _text + "|" : _text);
+			? (_focused ? (blinkingOn ? "|" : " ") : _placeholder)
+			: (_focused ? _text + (blinkingOn ? "|" : "") : _text);
 
 		_display.SetText(shown);
 		_display.TextColor = string.IsNullOrEmpty(_text) && !_focused ? new Color(150, 165, 195) : Color.White;
+	}
+
+	protected override void DrawSelf(SpriteBatch spriteBatch)
+	{
+		base.DrawSelf(spriteBatch);
+
+		if (!_focused)
+			return;
+
+		Terraria.GameInput.PlayerInput.WritingText = true;
+		Main.CurrentInputTextTakerOverride = this;
+		Main.instance.HandleIME();
+
+		string updated = Main.GetInputText(_text);
+		if (updated != _text)
+		{
+			_text = updated;
+			_onChanged?.Invoke(_text);
+		}
+
+		if (Main.inputTextEnter || Main.inputTextEscape)
+		{
+			ClearFocus();
+			SoundEngine.PlaySound(SoundID.MenuTick);
+		}
 	}
 }

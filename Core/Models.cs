@@ -20,6 +20,12 @@ public sealed class BossStageInfo
 	public int TreasureBagId { get; init; }
 	public List<int> LootItemIds { get; init; } = new();
 	public List<DropRateInfo> DropRates { get; init; } = new();
+	public int ChecklistOrder { get; init; }
+	public Func<bool> AvailableCheck { get; init; }
+	public Func<bool> ChecklistVisibleCheck { get; init; }
+
+	public bool IsAvailable => AvailableCheck?.Invoke() ?? true;
+	public bool IsVisibleOnChecklist => ChecklistVisibleCheck?.Invoke() ?? IsAvailable;
 
 	public bool IsDowned
 	{
@@ -56,6 +62,38 @@ public enum SourceConfidence
 	TierEstimated
 }
 
+public enum ObtainabilityDifficulty
+{
+	Easy = 0,
+	Medium = 1,
+	Hard = 2,
+	VeryHard = 3
+}
+
+public enum DifficultyFilterMode
+{
+	Comfortable = 0,
+	IncludeHard = 1,
+	All = 2
+}
+
+public sealed class ItemUnlockPath
+{
+	public float UnlockProgression { get; set; } = float.MaxValue;
+	public ItemSourceType SourceType { get; set; }
+	public SourceConfidence Confidence { get; set; }
+	public string SourceSummary { get; set; } = string.Empty;
+	public ObtainabilityDifficulty Difficulty { get; set; } = ObtainabilityDifficulty.Easy;
+	public string DifficultyReason { get; set; } = string.Empty;
+	public float BestDropChance { get; set; } = 1f;
+	public bool RequiresHardmode { get; set; }
+	public bool ExpertOnly { get; set; }
+	public bool MasterOnly { get; set; }
+	public bool ClassicOnly { get; set; }
+	public bool CrimsonOnly { get; set; }
+	public bool CorruptOnly { get; set; }
+}
+
 public sealed class ItemUnlockInfo
 {
 	public int ItemType { get; init; }
@@ -64,6 +102,9 @@ public sealed class ItemUnlockInfo
 	public ItemSourceType SourceType { get; set; }
 	public SourceConfidence Confidence { get; set; }
 	public string SourceSummary { get; set; }
+	public ObtainabilityDifficulty Difficulty { get; set; } = ObtainabilityDifficulty.Easy;
+	public string DifficultyReason { get; set; } = string.Empty;
+	public float BestDropChance { get; set; } = 1f;
 	public bool RequiresHardmode { get; set; }
 	public bool ExpertOnly { get; set; }
 	public bool MasterOnly { get; set; }
@@ -71,6 +112,44 @@ public sealed class ItemUnlockInfo
 	public bool CrimsonOnly { get; set; }
 	public bool CorruptOnly { get; set; }
 	public bool Unobtainable { get; set; }
+
+	/// <summary>
+	/// Best unlock path per DifficultyFilterMode:
+	/// [0] = Comfortable (Easy/Medium), [1] = IncludeHard (Easy/Medium/Hard), [2] = All.
+	/// </summary>
+	public ItemUnlockPath[] PathsByFilter { get; } = new ItemUnlockPath[3];
+
+	public ItemUnlockPath GetPathFor(DifficultyFilterMode mode)
+	{
+		int idx = Math.Clamp((int)mode, 0, 2);
+		for (int i = idx; i >= 0; i--)
+		{
+			if (PathsByFilter[i] != null && PathsByFilter[i].UnlockProgression < float.MaxValue * 0.5f)
+				return PathsByFilter[i];
+		}
+		return null;
+	}
+
+	public void SyncPrimaryFields(DifficultyFilterMode preferredMode = DifficultyFilterMode.Comfortable)
+	{
+		ItemUnlockPath best = GetPathFor(preferredMode) ?? GetPathFor(DifficultyFilterMode.All);
+		if (best == null)
+			return;
+
+		UnlockProgression = best.UnlockProgression;
+		SourceType = best.SourceType;
+		Confidence = best.Confidence;
+		SourceSummary = best.SourceSummary;
+		Difficulty = best.Difficulty;
+		DifficultyReason = best.DifficultyReason;
+		BestDropChance = best.BestDropChance;
+		RequiresHardmode = best.RequiresHardmode;
+		ExpertOnly = best.ExpertOnly;
+		MasterOnly = best.MasterOnly;
+		ClassicOnly = best.ClassicOnly;
+		CrimsonOnly = best.CrimsonOnly;
+		CorruptOnly = best.CorruptOnly;
+	}
 }
 
 public sealed class ItemSemanticProfile
@@ -102,6 +181,11 @@ public sealed class ArmorSetCandidate
 	public bool IsTrueSet { get; init; }
 	public string SetBonusSummary { get; init; } = string.Empty;
 	public string ModName { get; init; } = "Terraria";
+	public ObtainabilityDifficulty Difficulty { get; init; } = ObtainabilityDifficulty.Easy;
+	public string DifficultyReason { get; init; } = string.Empty;
+	public RecommendedSlotItem HeadSlot { get; init; }
+	public RecommendedSlotItem BodySlot { get; init; }
+	public RecommendedSlotItem LegsSlot { get; init; }
 }
 
 public sealed class RecommendedSlotItem
@@ -113,6 +197,9 @@ public sealed class RecommendedSlotItem
 	public string SourceSummary { get; init; }
 	public string ReasonSummary { get; init; }
 	public SourceConfidence Confidence { get; init; }
+	public ItemSourceType SourceType { get; init; }
+	public ObtainabilityDifficulty Difficulty { get; init; } = ObtainabilityDifficulty.Easy;
+	public string DifficultyReason { get; init; } = string.Empty;
 }
 
 public sealed class BuildQueryOptions
@@ -121,6 +208,7 @@ public sealed class BuildQueryOptions
 	public bool IncludeTierEstimatedItems { get; set; } = true;
 	public bool RespectWorldDifficulty { get; set; } = true;
 	public bool RespectWorldEvil { get; set; } = true;
+	public DifficultyFilterMode MaxDifficulty { get; set; } = DifficultyFilterMode.Comfortable;
 }
 
 public sealed class BuildRecommendation
@@ -131,11 +219,14 @@ public sealed class BuildRecommendation
 	public List<RecommendedSlotItem> PrimaryWeapons { get; } = new();
 	public List<RecommendedSlotItem> SupportWeapons { get; } = new();
 	public RecommendedSlotItem RecommendedAmmo { get; set; }
+	public List<RecommendedSlotItem> AmmoOptions { get; } = new();
 	public ArmorSetCandidate ArmorSet { get; set; }
+	public List<ArmorSetCandidate> ArmorOptions { get; } = new();
 	public RecommendedSlotItem HeadSlot { get; set; }
 	public RecommendedSlotItem BodySlot { get; set; }
 	public RecommendedSlotItem LegsSlot { get; set; }
 	public List<RecommendedSlotItem> Accessories { get; } = new();
+	public List<RecommendedSlotItem> AltAccessories { get; } = new();
 	public RecommendedSlotItem HealingPotion { get; set; }
 	public List<RecommendedSlotItem> BuffPotions { get; } = new();
 	public int AccessorySlotBudget { get; set; }

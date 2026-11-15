@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Terraria;
 using Terraria.GameContent.ItemDropRules;
 using Terraria.ID;
@@ -20,11 +21,15 @@ public sealed class BossCatalog
 	public bool UsedBossChecklist { get; private set; }
 
 	private readonly Dictionary<int, float> _npcProgression = new();
+	private readonly HashSet<int> _checklistNpcIds = new();
+	private readonly HashSet<string> _checklistModSources = new(StringComparer.OrdinalIgnoreCase);
 
 	public void Build(Mod mod)
 	{
 		AllStages.Clear();
 		_npcProgression.Clear();
+		_checklistNpcIds.Clear();
+		_checklistModSources.Clear();
 		UsedBossChecklist = false;
 
 		if (ModLoader.TryGetMod("BossChecklist", out Mod bossChecklist))
@@ -34,11 +39,22 @@ public sealed class BossCatalog
 
 		AppendMissingNpcBosses();
 
-		AllStages.Sort((a, b) =>
+		if (UsedBossChecklist)
 		{
-			int cmp = a.Progression.CompareTo(b.Progression);
-			return cmp != 0 ? cmp : string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase);
-		});
+			AllStages.Sort((a, b) =>
+			{
+				int cmp = a.Progression.CompareTo(b.Progression);
+				return cmp != 0 ? cmp : a.ChecklistOrder.CompareTo(b.ChecklistOrder);
+			});
+		}
+		else
+		{
+			AllStages.Sort((a, b) =>
+			{
+				int cmp = a.Progression.CompareTo(b.Progression);
+				return cmp != 0 ? cmp : string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase);
+			});
+		}
 
 		foreach (BossStageInfo stage in AllStages)
 		{
@@ -65,11 +81,15 @@ public sealed class BossCatalog
 	{
 		try
 		{
+			if (TryLoadFromSortedEntries(mod, bossChecklist))
+				return;
+
 			object raw = bossChecklist.Call("GetBossInfoDictionary", mod, "2.0.0");
 			if (raw is not Dictionary<string, Dictionary<string, object>> dict || dict.Count == 0)
 				return;
 
 			UsedBossChecklist = true;
+			int order = 0;
 
 			foreach ((string key, Dictionary<string, object> info) in dict)
 			{
@@ -80,6 +100,7 @@ public sealed class BossCatalog
 				bool isMiniboss = info.TryGetValue("isMiniboss", out object mbObj) && mbObj is bool mb && mb;
 				bool isEvent = info.TryGetValue("isEvent", out object evObj) && evObj is bool ev && ev;
 				Func<bool> downed = info.TryGetValue("downed", out object dObj) ? dObj as Func<bool> : null;
+				Func<bool> available = info.TryGetValue("availability", out object aObj) ? aObj as Func<bool> : null;
 
 				List<int> npcIds = info.TryGetValue("npcIDs", out object nObj) && nObj is List<int> nList
 					? new List<int>(nList)
@@ -106,16 +127,18 @@ public sealed class BossCatalog
 					? new List<DropRateInfo>(drList)
 					: new List<DropRateInfo>();
 
-				AllStages.Add(new BossStageInfo
+				RegisterChecklistStage(new BossStageInfo
 				{
 					Key = key,
 					ModSource = modSource,
 					DisplayName = string.IsNullOrWhiteSpace(displayName) ? key : displayName,
 					Progression = progression,
+					ChecklistOrder = order++,
 					IsBoss = isBoss,
 					IsMiniboss = isMiniboss,
 					IsEvent = isEvent,
 					DownedCheck = downed,
+					AvailableCheck = available,
 					NpcIds = npcIds,
 					SpawnItems = spawnItems,
 					TreasureBagId = bagId,
@@ -126,20 +149,178 @@ public sealed class BossCatalog
 		}
 		catch (Exception ex)
 		{
-			mod.Logger.Warn($"[BossBuildAdvisor] Failed reading BossChecklist dictionary, falling back to NPC scan: {ex.Message}");
+			mod.Logger.Warn($"[BossBuildAdvisor] Failed reading BossChecklist entries, falling back to NPC scan: {ex.Message}");
 		}
+	}
+
+	private bool TryLoadFromSortedEntries(Mod mod, Mod bossChecklist)
+	{
+		try
+		{
+			Assembly bcAsm = bossChecklist.Code;
+			Type bcType = bcAsm?.GetType("BossChecklist.BossChecklist");
+			FieldInfo trackerField = bcType?.GetField("bossTracker", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+			object tracker = trackerField?.GetValue(null);
+			if (tracker == null)
+				return false;
+
+			FieldInfo sortedField = tracker.GetType().GetField("SortedEntries", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+			if (sortedField?.GetValue(tracker) is not System.Collections.IEnumerable sortedEntries)
+				return false;
+
+			const BindingFlags AnyMember = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+			Type entryType = bcAsm.GetType("BossChecklist.EntryInfo");
+			if (entryType == null)
+				return false;
+
+			PropertyInfo keyProp = entryType.GetProperty("Key", AnyMember);
+			FieldInfo modSourceField = entryType.GetField("modSource", AnyMember);
+			PropertyInfo displayNameProp = entryType.GetProperty("DisplayName", AnyMember);
+			FieldInfo progressionField = entryType.GetField("progression", AnyMember);
+			FieldInfo typeField = entryType.GetField("type", AnyMember);
+			FieldInfo downedField = entryType.GetField("downed", AnyMember);
+			PropertyInfo autoDownedProp = entryType.GetProperty("IsAutoDownedOrMarked", AnyMember);
+			FieldInfo availableField = entryType.GetField("available", AnyMember);
+			FieldInfo hiddenField = entryType.GetField("hidden", AnyMember);
+			MethodInfo visibleMethod = entryType.GetMethod("VisibleOnChecklist", AnyMember);
+			FieldInfo npcIdsField = entryType.GetField("npcIDs", AnyMember);
+			FieldInfo spawnItemField = entryType.GetField("spawnItem", AnyMember);
+			PropertyInfo treasureBagProp = entryType.GetProperty("TreasureBag", AnyMember);
+			FieldInfo lootTypesField = entryType.GetField("lootItemTypes", AnyMember);
+			FieldInfo lootField = entryType.GetField("loot", AnyMember);
+
+			int order = 0;
+			int loaded = 0;
+
+			foreach (object entry in sortedEntries)
+			{
+				if (entry == null)
+					continue;
+
+				object entryObj = entry;
+				string key = keyProp?.GetValue(entryObj) as string ?? string.Empty;
+				string modSource = modSourceField?.GetValue(entryObj) as string ?? "Terraria";
+				string displayName = displayNameProp?.GetValue(entryObj) as string ?? key;
+				float progression = progressionField?.GetValue(entryObj) is float p ? p : 0f;
+				int entryKind = typeField?.GetValue(entryObj) is object tk ? Convert.ToInt32(tk) : 0;
+				Func<bool> rawDowned = downedField?.GetValue(entryObj) as Func<bool>;
+				Func<bool> available = availableField?.GetValue(entryObj) as Func<bool>;
+				bool isHidden = hiddenField?.GetValue(entryObj) is bool h && h;
+
+				List<int> npcIds = npcIdsField?.GetValue(entryObj) is List<int> nList
+					? new List<int>(nList)
+					: new List<int>();
+
+				if ((string.IsNullOrWhiteSpace(displayName) || displayName == key) && npcIds.Count > 0)
+				{
+					string npcName = Lang.GetNPCNameValue(npcIds[0]);
+					if (!string.IsNullOrWhiteSpace(npcName))
+						displayName = npcName;
+				}
+
+				List<int> spawnItems = spawnItemField?.GetValue(entryObj) is List<int> sList
+					? new List<int>(sList)
+					: new List<int>();
+
+				int bagId = treasureBagProp?.GetValue(entryObj) is int bagInt ? bagInt : 0;
+
+				List<int> lootIds = lootTypesField?.GetValue(entryObj) is List<int> lList
+					? new List<int>(lList)
+					: new List<int>();
+
+				List<DropRateInfo> dropRates = lootField?.GetValue(entryObj) is List<DropRateInfo> drList
+					? new List<DropRateInfo>(drList)
+					: new List<DropRateInfo>();
+
+				Func<bool> downedCheck = () =>
+				{
+					if (autoDownedProp != null)
+					{
+						try
+						{
+							return (bool)autoDownedProp.GetValue(entryObj);
+						}
+						catch
+						{
+						}
+					}
+					return rawDowned != null && rawDowned();
+				};
+
+				Func<bool> visibleCheck = () =>
+				{
+					if (visibleMethod != null)
+					{
+						try
+						{
+							return (bool)visibleMethod.Invoke(entryObj, null);
+						}
+						catch
+						{
+						}
+					}
+					if (isHidden)
+						return false;
+					return available == null || available();
+				};
+
+				RegisterChecklistStage(new BossStageInfo
+				{
+					Key = key,
+					ModSource = modSource,
+					DisplayName = string.IsNullOrWhiteSpace(displayName) ? key : displayName,
+					Progression = progression,
+					ChecklistOrder = order++,
+					IsBoss = entryKind == 0,
+					IsMiniboss = entryKind == 1,
+					IsEvent = entryKind == 2,
+					DownedCheck = downedCheck,
+					AvailableCheck = available,
+					ChecklistVisibleCheck = visibleCheck,
+					NpcIds = npcIds,
+					SpawnItems = spawnItems,
+					TreasureBagId = bagId,
+					LootItemIds = lootIds,
+					DropRates = dropRates
+				});
+				loaded++;
+			}
+
+			if (loaded > 0)
+			{
+				UsedBossChecklist = true;
+				return true;
+			}
+		}
+		catch (Exception ex)
+		{
+			mod.Logger.Debug($"[BossBuildAdvisor] BossChecklist SortedEntries reflection fallback to Call API: {ex.Message}");
+		}
+
+		return false;
+	}
+
+	private void RegisterChecklistStage(BossStageInfo stage)
+	{
+		AllStages.Add(stage);
+		if (!string.IsNullOrWhiteSpace(stage.ModSource) && !string.Equals(stage.ModSource, "Unknown", StringComparison.OrdinalIgnoreCase))
+			_checklistModSources.Add(stage.ModSource);
+
+		foreach (int npcId in stage.NpcIds)
+			_checklistNpcIds.Add(npcId);
 	}
 
 	private void AppendMissingNpcBosses()
 	{
-		var registeredNpcs = new HashSet<int>();
+		var registeredNpcs = new HashSet<int>(_checklistNpcIds);
 		foreach (BossStageInfo stage in AllStages)
 		{
 			foreach (int npcId in stage.NpcIds)
 				registeredNpcs.Add(npcId);
 		}
 
-		// Skip multi-part boss secondary segments (e.g. Eater of Worlds body/tail, Skeletron hands) if main head exists
+		// Skip multi-part boss secondary segments (e.g. Eater of Worlds body/tail, Skeletron hands)
+		// and skip mods already registered with BossChecklist so alternate boss phases/forms are not duplicated.
 		foreach ((int npcId, NPC npc) in ContentSamples.NpcsByNetId)
 		{
 			if (npc == null || !npc.boss || registeredNpcs.Contains(npcId))
@@ -148,8 +329,11 @@ public sealed class BossCatalog
 			if (IsSecondaryBossPart(npcId))
 				continue;
 
-			float estProg = EstimateBossProgressionFromStats(npc);
 			string modName = npc.ModNPC?.Mod?.Name ?? "Terraria";
+			if (UsedBossChecklist && _checklistModSources.Contains(modName))
+				continue;
+
+			float estProg = EstimateBossProgressionFromStats(npc);
 			string key = npc.ModNPC != null ? npc.ModNPC.FullName : $"Terraria/{NPCID.Search.GetName(npcId)}";
 			string display = Lang.GetNPCNameValue(npcId);
 			if (string.IsNullOrWhiteSpace(display))
@@ -163,6 +347,7 @@ public sealed class BossCatalog
 				ModSource = modName,
 				DisplayName = display,
 				Progression = estProg,
+				ChecklistOrder = int.MaxValue,
 				IsBoss = true,
 				IsMiniboss = false,
 				IsEvent = false,
@@ -174,9 +359,10 @@ public sealed class BossCatalog
 
 	public BossStageInfo GetNextUndefeatedBoss(bool includeMinibossesAndEvents)
 	{
-		IEnumerable<BossStageInfo> candidates = AllStages.Where(s => includeMinibossesAndEvents || s.IsBoss);
+		IEnumerable<BossStageInfo> candidates = AllStages.Where(s =>
+			s.IsVisibleOnChecklist && (includeMinibossesAndEvents || s.IsBoss));
 		BossStageInfo next = candidates.FirstOrDefault(s => !s.IsDowned);
-		return next ?? candidates.LastOrDefault() ?? AllStages.FirstOrDefault();
+		return next ?? candidates.LastOrDefault() ?? AllStages.FirstOrDefault(s => s.IsVisibleOnChecklist) ?? AllStages.FirstOrDefault();
 	}
 
 	private static string GetString(Dictionary<string, object> dict, string key, string fallback)

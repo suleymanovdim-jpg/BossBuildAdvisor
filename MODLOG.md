@@ -20,11 +20,11 @@
 - `ContentSamples.ItemsByType`, `ContentSamples.NpcsByNetId`, `Main.ItemDropsDB.GetRulesForNPCID(id, false)`, `Main.ItemDropsDB.GetRulesForItemID(bagId)`, `NPCShopDatabase.AllShops`, `DamageClassLoader.DamageClasses`, `ItemSlot.DrawItemIcon`.
 
 ## Verification Results (Live Modpack in Isolated Lab `tml-lab`)
-- Build: `powershell -ExecutionPolicy Bypass -File build.ps1` -> **0 warnings, 0 errors**, packaged `BossBuildAdvisor.tmod` (`%USERPROFILE%\Documents\My Games\Terraria\tModLoader\Mods\BossBuildAdvisor.tmod`).
-- Live Modpack Run (`tModLoader 1.4.4.9+2026.09.3.1`, `ru-RU`, full user modpack including `BossChecklist`, `Redemption`, `Split`, `Ultranium`):
-  - Indexed `7925` items across `94` boss/event stages (`Redemption:32`, `Terraria:39`, `Split:12`, `Ultranium:11`) in `42 ms` (`BossChecklist=True`).
-  - Discovered `193` armor sets and `6` combat classes (`Terraria/MeleeDamageClass`, `Terraria/RangedDamageClass`, `Terraria/MagicDamageClass`, `Terraria/SummonDamageClass`, `Redemption/RitualistClass`, `Split/HeavyMeleeDamageClass`).
-  - Verified clean stage milestones (`KingSlime=1`, `Skeletron=5`, `WoF=7`, `Destroyer=10`, `Plantera=12`, `Golem=13`, `MoonLord=18`) with localized boss names and per-class recommendations at `WoF` across all 6 classes.
-  - Verified UI layout geometry at `1280x720` (`Root=(155,63,970x594)`, `BossRows=61`, `ClassTabs=7`, `InsideScreen=True`, `PanelsFit=True`).
-- Limitation observed: OS window screenshot capture (`um win shot`) could not capture the window from the sandboxed desktop (`Desktop: exebox-...`), so visual in-world rendering and live interactive clicks should be checked by the user on launch.
-- Backup integrity (`um backup diff tml-user-backup`): only `Mods/BossBuildAdvisor.tmod` added and `Mods/enabled.json` updated in `%USERPROFILE%\Documents\My Games\Terraria\tModLoader`; all `Players/`, `Worlds/`, `config.json`, and `ModConfigs/` untouched.
+- Build:
+  - `dotnet build BossBuildAdvisor.csproj -c Release` -> **0 warnings, 0 errors**.
+  - Pure tModLoader Roslyn compiler (`tModLoader.dll -tmlsavedirectory .../tml-lab -build .../BossBuildAdvisor`) -> **0 errors and 0 warnings**.
+- Live Modpack Run (`tModLoader 1.4.4.9+2026.09.3.1`, `ru-RU`, full user modpack including `BossChecklist 2.2.4`, `Redemption`, `Split`, `Ultranium`):
+  - Indexed `7925` items across `80` stages (`Visible=68` at setup, `69/80` in world after downed World Evil unlock, `Hidden=12`) (`Redemption:22`, `Terraria:39`, `Split:10`, `Ultranium:9`), `193` armor sets, and `6` combat classes (`Terraria/MeleeDamageClass`, `Terraria/RangedDamageClass`, `Terraria/MagicDamageClass`, `Terraria/SummonDamageClass`, `Redemption/RitualistClass`, `Split/HeavyMeleeDamageClass`).
+  - Exact 1:1 `BossChecklist` order & zero duplicate mod bosses (`[v]Король слизней(1) -> Бог факелов(1.5) -> Тёрн(1.5) -> Бледный бес(1.9) -> [v]Глаз Ктулху(2) -> ...`), with inventory button positioned via reflected `BossChecklist.BossLogConfig.BossLogPos=(-270,-50)`, `BtnLoaded=True`, `Keybind=True`.
+  - Difficulty progression gates verified at King Slime (`1`) and Moon Lord (`18`): `ObsidianHelm` correctly gated to `Easy@3.3` (`Obsidian + Silk + ShadowScale`), `AncientShadowHelmet` gated to `VeryHard@0` (`0.2% Eater of Souls`, excluded in `Comfortable`), `Gladiator` gated to `Hard` (`+Hard` / `All`), `Zenith` resolved to `Recipe@18.1`, `UILayout 1040x636 InsideScreen=True PanelsFit=True`.
+- Noticeable environment constraints: headless screenshot capture inside the Windows session did not allow interactive pointer/keyboard driving inside the DX11 game window, so visual spacing beside `BossChecklist`'s book icon, typing into `BossSearchBox`, and pressing `K` should be visually confirmed on next user launch.
