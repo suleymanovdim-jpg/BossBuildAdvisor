@@ -70,8 +70,10 @@ public sealed class AdvisorUIState : UIState
 	private int _selectedArmorOptionIndex;
 	private RecommendedSlotItem _inspectedItem;
 
+	private const float TopSectionRowY = 92f;
+
 	private float _panelW = 1040f;
-	private float _panelH = 646f;
+	private float _panelH = 658f;
 	private float _rightColW = 736f;
 	private float _topRowH = 160f;
 	private float _midRowH = 152f;
@@ -120,7 +122,7 @@ public sealed class AdvisorUIState : UIState
 	private static void ComputeResponsiveMetrics(out float panelW, out float panelH, out float leftW)
 	{
 		panelW = Math.Clamp(Main.screenWidth - 20f, 680f, 1040f);
-		panelH = Math.Clamp(Main.screenHeight - 20f, 480f, 646f);
+		panelH = Math.Clamp(Main.screenHeight - 20f, 480f, 658f);
 		leftW = Math.Clamp(panelW * 0.265f, 210f, 276f);
 	}
 
@@ -267,18 +269,18 @@ public sealed class AdvisorUIState : UIState
 		{
 			Top = StyleDimension.FromPixels(34f),
 			Width = StyleDimension.FromPercent(1f),
-			Height = StyleDimension.FromPixels(42f),
+			Height = StyleDimension.FromPixels(54f),
 			BackgroundColor = new Color(32, 42, 72, 225),
 			BorderColor = new Color(16, 22, 40),
 			OverflowHidden = true
 		};
-		_bannerPanel.SetPadding(6f);
+		_bannerPanel.SetPadding(5f);
 		_rightCol.Append(_bannerPanel);
 
 		_bossBannerText = new UIText("...", 0.90f)
 		{
 			Left = StyleDimension.FromPixels(4f),
-			Top = StyleDimension.FromPixels(1f),
+			Top = StyleDimension.FromPixels(0f),
 			TextColor = new Color(255, 225, 115)
 		};
 		_bannerPanel.Append(_bossBannerText);
@@ -292,12 +294,12 @@ public sealed class AdvisorUIState : UIState
 		_bannerPanel.Append(_bossMetaText);
 
 		// Weapons + Support + Ammo (top-left, 2x7 grid)
-		_weaponsPanel = CreateSectionPanel(0f, 80f, 376f, 160f, string.Format(Loc("UI.SectionWeapons"), 0));
+		_weaponsPanel = CreateSectionPanel(0f, TopSectionRowY, 376f, 160f, string.Format(Loc("UI.SectionWeapons"), 0));
 		_rightCol.Append(_weaponsPanel);
 		_weaponsHeader = _weaponsPanel.Children.OfType<UIText>().FirstOrDefault();
 
 		// Armor Sets (top-right, 3 armor slots + persistent #1/#2/#3 set switcher)
-		_armorPanel = CreateSectionPanel(384f, 80f, -384f, 160f, Loc("UI.SectionArmor"), widthPercent: 1f);
+		_armorPanel = CreateSectionPanel(384f, TopSectionRowY, -384f, 160f, Loc("UI.SectionArmor"), widthPercent: 1f);
 		_rightCol.Append(_armorPanel);
 
 		for (int i = 0; i < 3; i++)
@@ -328,16 +330,16 @@ public sealed class AdvisorUIState : UIState
 		_armorPanel.Append(_armorBonusText);
 
 		// Accessories (mid-left, 2x7 = 14 slots: core + alternatives)
-		_accessoriesPanel = CreateSectionPanel(0f, 246f, 424f, 152f, Loc("UI.SectionAccessories"));
+		_accessoriesPanel = CreateSectionPanel(0f, 258f, 424f, 152f, Loc("UI.SectionAccessories"));
 		_rightCol.Append(_accessoriesPanel);
 		_accessoriesHeader = _accessoriesPanel.Children.OfType<UIText>().FirstOrDefault();
 
 		// Potions & Buffs (mid-right, 2x5 slots)
-		_potionsPanel = CreateSectionPanel(432f, 246f, -432f, 152f, Loc("UI.SectionPotions"), widthPercent: 1f);
+		_potionsPanel = CreateSectionPanel(432f, 258f, -432f, 152f, Loc("UI.SectionPotions"), widthPercent: 1f);
 		_rightCol.Append(_potionsPanel);
 
 		// Selected Item Details (bottom)
-		_detailsPanel = CreateSectionPanel(0f, 404f, 0f, -404f, Loc("UI.SectionDetails"), widthPercent: 1f, heightPercent: 1f);
+		_detailsPanel = CreateSectionPanel(0f, 416f, 0f, -416f, Loc("UI.SectionDetails"), widthPercent: 1f, heightPercent: 1f);
 		_rightCol.Append(_detailsPanel);
 	}
 
@@ -423,21 +425,21 @@ public sealed class AdvisorUIState : UIState
 		_rightCol.Width.Set(-rightX, 1f);
 		_rightColW = Math.Max(360f, _panelW - 20f - rightX);
 
-		float availRightH = _panelH - 20f - 50f - 80f;
+		float availRightH = _panelH - 20f - 50f - TopSectionRowY;
 		_topRowH = Math.Clamp((float)Math.Floor(availRightH * 0.32f), 128f, 160f);
 		_midRowH = Math.Clamp((float)Math.Floor(availRightH * 0.30f), 124f, 152f);
-		float midRowY = 80f + _topRowH + 6f;
+		float midRowY = TopSectionRowY + _topRowH + 6f;
 		float detRowY = midRowY + _midRowH + 6f;
 
 		float wpnW = (float)Math.Floor((_rightColW - 8f) * 0.515f);
 		float accW = (float)Math.Floor((_rightColW - 8f) * 0.58f);
 
-		_weaponsPanel.Top.Set(80f, 0f);
+		_weaponsPanel.Top.Set(TopSectionRowY, 0f);
 		_weaponsPanel.Width.Set(wpnW, 0f);
 		_weaponsPanel.Height.Set(_topRowH, 0f);
 
 		_armorPanel.Left.Set(wpnW + 8f, 0f);
-		_armorPanel.Top.Set(80f, 0f);
+		_armorPanel.Top.Set(TopSectionRowY, 0f);
 		_armorPanel.Width.Set(-(wpnW + 8f), 1f);
 		_armorPanel.Height.Set(_topRowH, 0f);
 
@@ -589,8 +591,9 @@ public sealed class AdvisorUIState : UIState
 			: ItemTooltipAnalyzer.FormatClassDisplayName(_currentRec.TargetClass);
 
 		string stagePrefix = string.Format(Loc("UI.StagePrefix"), _selectedStage.Progression);
-		_bossBannerText.SetText($"{_selectedStage.DisplayName}  [{_selectedStage.ModSource}]");
-		_bossMetaText.SetText($"{stagePrefix}  |  {statusText}  |  {classDisplay}  |  {GetDifficultyButtonLabel(_options.MaxDifficulty)}");
+		float bannerMaxW = Math.Max(220f, _rightColW - 22f);
+		SetFittedBannerText(_bossBannerText, $"{_selectedStage.DisplayName}  [{_selectedStage.ModSource}]", 0.90f, 0.62f, bannerMaxW);
+		SetFittedBannerText(_bossMetaText, $"{stagePrefix}  |  {statusText}  |  {classDisplay}  |  {GetDifficultyButtonLabel(_options.MaxDifficulty)}", 0.70f, 0.50f, bannerMaxW);
 
 		_allSlots.Clear();
 		ClearSlotsExceptHeader(_weaponsPanel);
@@ -634,6 +637,19 @@ public sealed class AdvisorUIState : UIState
 		PlaceSlotGrid(_potionsPanel, potionSlots, startX: 4f, startY: 24f, slotSize: potSize, gap: 5f, cols: 5, shortTagFn: s => s.RoleTag == "Healing" ? hpTag : "");
 
 		RenderInspectedItemDetails();
+	}
+
+	private static void SetFittedBannerText(UIText label, string text, float baseScale, float minScale, float maxWidth)
+	{
+		float scale = baseScale;
+		if (Terraria.GameContent.FontAssets.MouseText?.IsLoaded == true)
+		{
+			float width = Terraria.GameContent.FontAssets.MouseText.Value.MeasureString(text).X * baseScale;
+			if (width > maxWidth && width > 0f)
+				scale = Math.Max(minScale, baseScale * (maxWidth / width));
+		}
+
+		label.SetText(text, scale, large: false);
 	}
 
 	private static float CalcSlotSize(float innerW, int cols, float gap, float maxSize)

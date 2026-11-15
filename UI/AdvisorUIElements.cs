@@ -199,7 +199,7 @@ public sealed class BossStageRow : UIPanel
 		_onSelect = onSelect;
 
 		Width.Set(0f, 1f);
-		Height.Set(42f, 0f);
+		Height.Set(46f, 0f);
 		OverflowHidden = true;
 		SetPadding(5f);
 
@@ -213,7 +213,7 @@ public sealed class BossStageRow : UIPanel
 
 		var title = new UIText(nameText, 0.78f)
 		{
-			Top = StyleDimension.FromPixels(1f),
+			Top = StyleDimension.FromPixels(0f),
 			Left = StyleDimension.FromPixels(3f),
 			TextColor = titleColor
 		};
@@ -225,7 +225,7 @@ public sealed class BossStageRow : UIPanel
 		string tag = stage.IsBoss ? stage.ModSource : $"{stage.ModSource} • {typeTag}";
 		var sub = new UIText($"{tag} ({stage.Progression:0.#})", 0.64f)
 		{
-			Top = StyleDimension.FromPixels(19f),
+			Top = StyleDimension.FromPixels(18f),
 			Left = StyleDimension.FromPixels(26f),
 			TextColor = new Color(175, 190, 220)
 		};
