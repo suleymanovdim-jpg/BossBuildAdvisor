@@ -1,0 +1,32 @@
+[h1]Boss Build Advisor (Auto Cross-Mod)[/h1]
+
+Automatic, modpack-agnostic boss progression build recommender for [b]tModLoader 1.4.4+[/b].
+Instead of relying on hardcoded spreadsheets, it automatically inspects every loaded mod at startup and suggests complete boss-by-boss loadouts across vanilla and modded bosses.
+
+[h2]What It Recommends Per Boss Stage[/h2]
+[list]
+[*] [b]Weapons & Ammo[/b] (and Sentry/Whip support for Summoners) filtered by progression and class
+[*] [b]Full Armor Sets[/b] (or best mixed gear fallback) with total defense & set bonus summary
+[*] [b]Role-Budgeted Accessories[/b] (Wings, Boots, Dash, Class Boost, Defense/Utility — suppresses redundant crafting precursors)
+[*] [b]Healing & Combat Buff Potions[/b] matching the target stage and class
+[*] [b]Acquisition Guide[/b]: Boss Drop, Craft recipe ingredients, NPC Drop, Shop, Crate/Bag, Shimmer, or Tier Estimate
+[/list]
+
+[h2]Cross-Mod Compatibility[/h2]
+[list]
+[*] Uses [b]BossChecklist[/b] (`GetBossInfoDictionary` 2.0.0) when present, with automatic fallback scanning of `ContentSamples.NpcsByNetId`
+[*] Auto-discovers custom mod [b]DamageClasses[/b] (`DamageClassLoader`), custom armor sets (`IsArmorSet`), crafting recipes, `RecipeGroup`s, `ItemDropsDB`, NPC shops, and Shimmer transforms
+[*] [b]Client-side[/b] (`side = Client`) — safe for singleplayer and multiplayer servers without requiring server installation
+[/list]
+
+[h2]Controls & Commands[/h2]
+[list]
+[*] Press [b]K[/b] (rebindable in Controls) or click [b]Build Advisor [K][/b] while inventory is open
+[*] Chat commands: `/advisor`, `/advisor next`, `/advisor stage <boss>`, `/advisor rebuild`, `/advisor dump`
+[/list]
+
+[h2]RU / Русское описание[/h2]
+Автоматический советник билдов по боссам для любой сборки модов (включая модовые классы, броню, боссов и крафты из BossChecklist). Открывается по клавише [b]K[/b], кнопкой [b]Build Advisor [K][/b] в инвентаре или командой `/advisor`.
+
+Version: {ModVersion}
+Open Source (MIT) | Built with AI assistance.

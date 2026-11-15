@@ -1,0 +1,8 @@
+bin/
+obj/
+*.tmod
+*.user
+.vs/
+Release/
+.DS_Store
+Thumbs.db

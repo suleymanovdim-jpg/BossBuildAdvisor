@@ -1,0 +1,8 @@
+displayName = Boss Build Advisor (Auto Cross-Mod)
+author = suley + AI
+version = 0.1.0
+side = Client
+weakReferences = BossChecklist
+homepage = https://github.com/suleymanovdim-jpg/BossBuildAdvisor
+includeSource = true
+buildIgnore = *.csproj, *.user, obj/*, bin/*, .vs/*, .git/*, *.ps1, *.md, LICENSE, icon_workshop.png

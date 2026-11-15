@@ -1,0 +1,35 @@
+Keybinds.ToggleAdvisor.DisplayName: Toggle Boss Build Advisor
+
+UI: {
+	Title: Boss Build Advisor
+	Subtitle: Auto Cross-Mod Loadouts
+	JumpToNextBoss: Next Boss
+	AllClasses: Auto / Best
+	IncludeBossDropsOff: Mode: Pre-Boss
+	IncludeBossDropsOn: Mode: Post-Boss
+	IncludeEstimatedOn: Tier-Est: ON
+	IncludeEstimatedOff: Tier-Est: OFF
+	IncludeMinibossesOn: Events/Mini: ON
+	IncludeMinibossesOff: Events/Mini: OFF
+	SearchPlaceholder: Search boss...
+	SectionWeapons: Weapons & Ammo
+	SectionArmor: Armor Set
+	SectionAccessories: Accessories
+	SectionPotions: Potions & Buffs
+	SectionDetails: Selected Item Details
+	BossDefeated: Defeated
+	BossNextTarget: Next Target
+	BossUpcoming: Upcoming
+	ConfidenceVerified: Verified Source
+	ConfidenceCrafted: Crafted Chain
+	ConfidenceTierEstimated: Tier Estimated
+	NoArmorSetBonus: Mixed best-in-slot armor (no full set matched)
+	ClickItemHint: Hover for stats, click an item to inspect recipe / drop source.
+	TotalDefense: Total Defense: {0}
+	ModOrigin: Mod: {0}
+	UnlockStage: Available from stage <= {0:0.0} ({1})
+	SourcePrefix: How to get: {0}
+	ReasonsPrefix: Why picked: {0}
+	OpenButtonTooltip: Open Boss Build Advisor
+	SlotsHeader: Accessory Slots: {0}
+}

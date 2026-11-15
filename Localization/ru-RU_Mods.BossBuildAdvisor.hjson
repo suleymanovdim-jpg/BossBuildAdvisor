@@ -1,0 +1,35 @@
+Keybinds.ToggleAdvisor.DisplayName: Открыть советник билдов по боссам
+
+UI: {
+	Title: Советник билдов
+	Subtitle: Авто-подбор из всех модов
+	JumpToNextBoss: След. босс
+	AllClasses: Авто / Лучшее
+	IncludeBossDropsOff: Режим: До босса
+	IncludeBossDropsOn: Режим: После босса
+	IncludeEstimatedOn: По тиру: ВКЛ
+	IncludeEstimatedOff: По тиру: ВЫКЛ
+	IncludeMinibossesOn: Мини/Ивенты: ВКЛ
+	IncludeMinibossesOff: Мини/Ивенты: ВЫКЛ
+	SearchPlaceholder: Поиск босса...
+	SectionWeapons: Оружие и боеприпасы
+	SectionArmor: Броня и сет-бонус
+	SectionAccessories: Аксессуары
+	SectionPotions: Зелья и баффы
+	SectionDetails: Детали предмета
+	BossDefeated: Побеждён
+	BossNextTarget: Следующая цель
+	BossUpcoming: Впереди
+	ConfidenceVerified: Проверенный источник
+	ConfidenceCrafted: Цепочка крафта
+	ConfidenceTierEstimated: Оценка по тиру
+	NoArmorSetBonus: Сборный сет (цельный бонус не найден)
+	ClickItemHint: Наведите для статов, нажмите на предмет — покажет крафт или дроп.
+	TotalDefense: Общая защита: {0}
+	ModOrigin: Мод: {0}
+	UnlockStage: Доступно с этапа <= {0:0.0} ({1})
+	SourcePrefix: Где взять: {0}
+	ReasonsPrefix: Почему выбран: {0}
+	OpenButtonTooltip: Открыть советник билдов (Boss Build Advisor)
+	SlotsHeader: Слотов аксессуаров: {0}
+}
