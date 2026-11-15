@@ -1,6 +1,6 @@
 displayName = Boss Build Advisor (Auto Cross-Mod)
 author = suley + AI
-version = 0.2.0
+version = 0.2.1
 side = Client
 weakReferences = BossChecklist
 homepage = https://github.com/suleymanovdim-jpg/BossBuildAdvisor

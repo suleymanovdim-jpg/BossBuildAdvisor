@@ -1,6 +1,7 @@
 Boss Build Advisor v{ModVersion}
 
 [EN]
+- Fixed inventory book toggle button click reliability by migrating to a dedicated UIElement + UserInterface UpdateUI lifecycle (matching BossChecklist and ProgressionJournal), claiming mouseInterface/blockMouse before player updates and rendering the hover tooltip in Mouse Text
 - Exact 1:1 BossChecklist progression order, visibility filtering, and defeated status sync
 - New Obtainability Difficulty filter (Loot: Comfort / +Hard / All RNG) filtering rare RNG drops, Shimmer skips, and low-chance crates out of default Comfort builds
 - Expanded build recommendations: up to 8 primary + 4 support weapons + 3 ammo options, 3 selectable armor variants (#1 / #2 / #3), and up to 14 role-budgeted accessories
@@ -9,6 +10,7 @@ Boss Build Advisor v{ModVersion}
 - Full English (en-US) and Russian (ru-RU) localization parity
 
 [RU]
+- Исправлена работа кнопки-книжки в инвентаре: кнопка переведена на выделенный UIElement + UserInterface в UpdateUI (как в BossChecklist и ProgressionJournal), защищает mouseInterface/blockMouse до обновления игрока и отображает подсказку в слое Mouse Text
 - Точная синхронизация порядка боссов, видимости и отметок побед 1:1 с BossChecklist
 - Фильтр сложности добычи (Добыча: Комфорт / +Сложно / Всё RNG), скрывающий ультра-редкий фарм, шиммер-скипы и редкие ящики в режиме Комфорт
 - Расширенные подборки: до 8 основных + 4 доп. оружий + 3 варианта боеприпасов, 3 переключаемых сета брони (#1 / #2 / #3) и до 14 аксессуаров

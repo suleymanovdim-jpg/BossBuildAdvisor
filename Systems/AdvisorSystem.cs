@@ -31,6 +31,8 @@ public sealed class AdvisorSystem : ModSystem
 
 	private UserInterface _userInterface;
 	private AdvisorUIState _uiState;
+	private UserInterface _buttonInterface;
+	private AdvisorButtonUIState _buttonState;
 	private Asset<Texture2D> _buttonTexture;
 	private bool _isOpen;
 	private bool _dataBuilt;
@@ -44,13 +46,28 @@ public sealed class AdvisorSystem : ModSystem
 	{
 		Instance = this;
 		if (!Main.dedServ)
+		{
 			_buttonTexture = ModContent.Request<Texture2D>("BossBuildAdvisor/Assets/UI/AdvisorButton", AssetRequestMode.AsyncLoad);
+			_buttonInterface = new UserInterface();
+			_buttonState = new AdvisorButtonUIState(
+				GetBossChecklistButtonPos,
+				() => _buttonTexture,
+				() => _isOpen,
+				CanInteractWithInventoryButton,
+				GetInventoryButtonTooltipText,
+				ToggleOpen);
+			_buttonState.Activate();
+			_buttonInterface.SetState(_buttonState);
+		}
 	}
 
 	public override void Unload()
 	{
 		Instance = null;
 		_buttonTexture = null;
+		_buttonInterface?.SetState(null);
+		_buttonInterface = null;
+		_buttonState = null;
 		_userInterface = null;
 		_uiState = null;
 		_isOpen = false;
@@ -286,6 +303,38 @@ public sealed class AdvisorSystem : ModSystem
 			ToggleFromHotkey();
 	}
 
+	private static bool ShouldShowInventoryButton()
+	{
+		return !Main.dedServ
+			&& Main.playerInventory
+			&& !Main.gameMenu
+			&& !Main.ingameOptionsWindow
+			&& !Main.inFancyUI
+			&& !Main.mapFullscreen;
+	}
+
+	private bool CanInteractWithInventoryButton()
+	{
+		bool advisorBlocking = _isOpen && _uiState != null && _uiState.ContainsMouse;
+		return ShouldShowInventoryButton()
+			&& !advisorBlocking
+			&& !PlayerInput.IgnoreMouseInterface
+			&& !Main.drawingPlayerChat
+			&& !Main.editSign
+			&& !Main.editChest;
+	}
+
+	private static string GetInventoryButtonTooltipText()
+	{
+		string keyLabel = "-";
+		ModKeybind keybind = BossBuildAdvisor.ToggleAdvisorKeybind ?? ToggleAdvisorKeybind;
+		List<string> keys = keybind?.GetAssignedKeys();
+		if (keys != null && keys.Count > 0 && !string.IsNullOrWhiteSpace(keys[0]))
+			keyLabel = keys[0];
+
+		return string.Format(Language.GetTextValue("Mods.BossBuildAdvisor.UI.OpenButtonTooltip"), keyLabel);
+	}
+
 	public override void UpdateUI(GameTime gameTime)
 	{
 		if (Main.dedServ || Main.gameMenu)
@@ -298,6 +347,11 @@ public sealed class AdvisorSystem : ModSystem
 		{
 			_userInterface.Update(gameTime);
 		}
+
+		if (CanInteractWithInventoryButton() && _buttonInterface?.CurrentState != null)
+		{
+			_buttonInterface.Update(gameTime);
+		}
 	}
 
 	public override void ModifyInterfaceLayers(List<GameInterfaceLayer> layers)
@@ -309,8 +363,11 @@ public sealed class AdvisorSystem : ModSystem
 				"BossBuildAdvisor: Inventory Toggle",
 				delegate
 				{
-					if (Main.playerInventory && !Main.gameMenu && !Main.ingameOptionsWindow && !Main.inFancyUI && !Main.mapFullscreen)
-						DrawInventoryToggleButton();
+					if (ShouldShowInventoryButton() && _buttonInterface?.CurrentState != null && _buttonState != null)
+					{
+						_buttonState.UpdatePlacement();
+						_buttonInterface.Draw(Main.spriteBatch, Main._drawInterfaceGameTime);
+					}
 					return true;
 				},
 				InterfaceScaleType.UI));
@@ -361,85 +418,5 @@ public sealed class AdvisorSystem : ModSystem
 
 		// BossChecklist default BossLogPos (-270, -50) from bottom-right
 		return new Vector2(-270f, -50f);
-	}
-
-	private void DrawInventoryToggleButton()
-	{
-		Vector2 bcPos = GetBossChecklistButtonPos();
-		const int w = 32;
-		const int h = 34;
-		const int gap = 8;
-
-		// BossChecklist stores BossLogPos as the TOP-LEFT offset from (screenWidth, screenHeight) for its 34x38 icon
-		float bookX = Math.Clamp(Main.screenWidth + bcPos.X, 0f, Main.screenWidth - 34f);
-		float bookY = Math.Clamp(Main.screenHeight + bcPos.Y, 0f, Main.screenHeight - 38f);
-		int y = (int)Math.Clamp(bookY + (38f - h) * 0.5f, 8f, Main.screenHeight - h - 8f);
-
-		float leftX = bookX - gap - w;
-		float rightX = bookX + 34f + gap;
-		bool chestOrShop = Main.LocalPlayer != null && (Main.LocalPlayer.chest != -1 || Main.npcShop > 0);
-		bool leftBlocked = leftX < 8f || (chestOrShop && leftX < 520f && y > 235f && y < 480f);
-		float chosenX = leftBlocked && rightX + w <= Main.screenWidth - 8f ? rightX : leftX;
-		int x = (int)Math.Clamp(chosenX, 8f, Main.screenWidth - w - 8f);
-
-		var rect = new Rectangle(x, y, w, h);
-		bool advisorBlocking = _isOpen && _uiState != null && _uiState.ContainsMouse;
-		bool inputBlocking = PlayerInput.IgnoreMouseInterface
-			|| advisorBlocking
-			|| (Main.LocalPlayer?.mouseInterface ?? false)
-			|| Main.blockMouse
-			|| Main.drawingPlayerChat
-			|| Main.editSign
-			|| Main.editChest;
-		bool hovered = !inputBlocking && rect.Contains(Main.MouseScreen.ToPoint());
-
-		if (_buttonTexture != null && _buttonTexture.IsLoaded)
-		{
-			float alpha = hovered || _isOpen ? 1f : 0.78f;
-			Main.spriteBatch.Draw(_buttonTexture.Value, rect, Color.White * alpha);
-		}
-		else
-		{
-			Color bg = _isOpen
-				? new Color(75, 112, 175, 235)
-				: (hovered ? new Color(62, 78, 122, 235) : new Color(34, 45, 76, 215));
-			Utils.DrawInvBG(Main.spriteBatch, rect, bg);
-		}
-
-		if (hovered || _isOpen)
-		{
-			Texture2D pixel = TextureAssets.MagicPixel.Value;
-			Color border = _isOpen ? new Color(110, 220, 255) : new Color(255, 215, 90);
-			Main.spriteBatch.Draw(pixel, new Rectangle(rect.X - 1, rect.Y - 1, rect.Width + 2, 2), border);
-			Main.spriteBatch.Draw(pixel, new Rectangle(rect.X - 1, rect.Bottom - 1, rect.Width + 2, 2), border);
-			Main.spriteBatch.Draw(pixel, new Rectangle(rect.X - 1, rect.Y - 1, 2, rect.Height + 2), border);
-			Main.spriteBatch.Draw(pixel, new Rectangle(rect.Right - 1, rect.Y - 1, 2, rect.Height + 2), border);
-		}
-
-		if (hovered)
-		{
-			if (Main.LocalPlayer != null)
-				Main.LocalPlayer.mouseInterface = true;
-			Main.blockMouse = true;
-			Main.HoverItem.TurnToAir();
-
-			string keyLabel = "-";
-			List<string> keys = ToggleAdvisorKeybind?.GetAssignedKeys();
-			if (keys != null && keys.Count > 0 && !string.IsNullOrWhiteSpace(keys[0]))
-				keyLabel = keys[0];
-
-			string hoverTitle = string.Format(Language.GetTextValue("Mods.BossBuildAdvisor.UI.OpenButtonTooltip"), keyLabel);
-			Vector2 strSize = FontAssets.MouseText.Value.MeasureString(hoverTitle) * 0.85f;
-			float tx = Math.Clamp(rect.Center.X - strSize.X * 0.5f, 10f, Main.screenWidth - strSize.X - 10f);
-			float ty = Math.Max(8f, rect.Y - 24f);
-			Utils.DrawBorderStringFourWay(Main.spriteBatch, FontAssets.MouseText.Value, hoverTitle, tx, ty, new Color(255, 228, 130), Color.Black, Vector2.Zero, 0.85f);
-
-			if (Main.mouseLeft && Main.mouseLeftRelease)
-			{
-				Main.mouseLeftRelease = false;
-				SoundEngine.PlaySound(_isOpen ? SoundID.MenuClose : SoundID.MenuOpen);
-				ToggleOpen();
-			}
-		}
 	}
 }
