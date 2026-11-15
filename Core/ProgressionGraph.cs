@@ -49,6 +49,7 @@ public sealed class ProgressionGraph
 		SeedNpcDrops(catalog);
 		CollectOpenableBagsAndCrates(catalog);
 		SeedNpcShops(catalog);
+		SeedGuaranteedBiomeResources(catalog);
 		SeedUncraftedWorldMaterials(catalog);
 		RunRelaxationPasses(catalog, 12);
 		SeedCyclicAndFlooredMaterials(catalog);
@@ -136,18 +137,46 @@ public sealed class ProgressionGraph
 				if (!ContentSamples.ItemsByType.TryGetValue(req.type, out Item ingItem) || !ContentSamples.ItemsByType.TryGetValue(resultId, out Item outItem))
 					continue;
 
-				bool bothEquip = (ingItem.accessory && outItem.accessory) || (ingItem.damage > 0 && outItem.damage > 0);
-				if (!bothEquip)
+				bool outEquip = outItem.accessory || outItem.damage > 0;
+				if (!outEquip)
 					continue;
 
-				if (!EquipmentUpgradesTo.TryGetValue(req.type, out HashSet<int> targets))
+				bool bothEquip = (ingItem.accessory && outItem.accessory) || (ingItem.damage > 0 && outItem.damage > 0);
+				if (bothEquip)
+					AddEquipmentUpgradeEdge(req.type, resultId);
+
+				if (recipe.acceptedGroups != null)
 				{
-					targets = new HashSet<int>();
-					EquipmentUpgradesTo[req.type] = targets;
+					foreach (int groupId in recipe.acceptedGroups)
+					{
+						if (groupId < 0)
+							break;
+
+						if (!RecipeGroup.recipeGroups.TryGetValue(groupId, out RecipeGroup group) || !group.ContainsItem(req.type))
+							continue;
+
+						foreach (int altReqId in group.ValidItems)
+						{
+							if (altReqId == req.type || altReqId == resultId || !ContentSamples.ItemsByType.TryGetValue(altReqId, out Item altItem))
+								continue;
+
+							if ((altItem.accessory && outItem.accessory) || (altItem.damage > 0 && outItem.damage > 0))
+								AddEquipmentUpgradeEdge(altReqId, resultId);
+						}
+					}
 				}
-				targets.Add(resultId);
 			}
 		}
+	}
+
+	private void AddEquipmentUpgradeEdge(int fromId, int toId)
+	{
+		if (!EquipmentUpgradesTo.TryGetValue(fromId, out HashSet<int> targets))
+		{
+			targets = new HashSet<int>();
+			EquipmentUpgradesTo[fromId] = targets;
+		}
+		targets.Add(toId);
 	}
 
 	private void SeedBossLootAndBags(BossCatalog catalog)
@@ -503,6 +532,19 @@ public sealed class ProgressionGraph
 		return (baseDiff, baseReason);
 	}
 
+	private void SeedGuaranteedBiomeResources(BossCatalog catalog)
+	{
+		float eow = catalog.GetProgressionForNpc(NPCID.EaterofWorldsHead, 3f);
+		float boc = catalog.GetProgressionForNpc(NPCID.BrainofCthulhu, eow);
+		float evil = Math.Min(eow, boc);
+
+		// Post-evil-boss biome ores can always be mined cleanly even if an enemy (e.g. Meteor Head 2%) also drops them rarely
+		TryRegisterSource(ItemID.Meteorite, evil + 0.01f, ItemSourceType.WorldTier, SourceConfidence.Verified,
+			"Meteorite biome (after EoW / BoC)", false, default, ObtainabilityDifficulty.Medium, LootLoc("MeteorBiome"), 1f);
+		TryRegisterSource(ItemID.Hellstone, evil + 0.05f, ItemSourceType.WorldTier, SourceConfidence.Verified,
+			"Underworld mining (after EoW / BoC)", false, default, ObtainabilityDifficulty.Medium, LootLoc("UnderworldEarly"), 1f);
+	}
+
 	private void SeedUncraftedWorldMaterials(BossCatalog catalog)
 	{
 		// Pre-seed raw world materials (no recipes, no NPC drops, no shops) with a conservative world-tier progression
@@ -605,17 +647,24 @@ public sealed class ProgressionGraph
 				if (gate.Unobtainable)
 					continue;
 
-				float tileFloor = gate.MinProgression;
+				float craftFloor = gate.MinProgression;
 				foreach (int tileId in r.requiredTile)
 				{
 					if (_tileProgression.TryGetValue(tileId, out float tileProg))
-						tileFloor = Math.Max(tileFloor, tileProg);
+						craftFloor = Math.Max(craftFloor, tileProg);
 				}
+
+				// Custom quest/dialogue/mod conditions (e.g. ForgedByCalavia / RepairedByFallen) must not leak high-tier gear at stage 0
+				if (gate.HasSpecialCondition && gate.MinProgression <= 0.01f)
+					craftFloor = Math.Max(craftFloor, EstimateDropRarityFloor(r.createItem, catalog));
+
+				if ((r.createItem.damage > 0 || r.createItem.defense > 0) && r.createItem.rare >= ItemRarityID.LightRed)
+					craftFloor = Math.Max(craftFloor, catalog.WallOfFleshProgression + 0.05f);
 
 				for (int filterIdx = 0; filterIdx < 3; filterIdx++)
 				{
 					var filterMode = (DifficultyFilterMode)filterIdx;
-					float recipeStage = tileFloor;
+					float recipeStage = craftFloor;
 					bool allKnown = true;
 					bool anyHardmode = gate.RequiresHardmode;
 					bool anyTierEstimated = false;
@@ -646,6 +695,14 @@ public sealed class ProgressionGraph
 
 					if (!allKnown)
 						continue;
+
+					if (gate.HasSpecialCondition && maxDiff < ObtainabilityDifficulty.Hard)
+					{
+						maxDiff = ObtainabilityDifficulty.Hard;
+						hardReason = !string.IsNullOrWhiteSpace(gate.SpecialConditionText)
+							? gate.SpecialConditionText
+							: LootLoc("SpecialCondition");
+					}
 
 					recipeStage = ApplyMinimumFloor(outId, recipeStage);
 					(maxDiff, hardReason) = ApplyMaterialDifficulty(outId, maxDiff, hardReason);
@@ -1107,13 +1164,19 @@ public sealed class ProgressionGraph
 		};
 
 		// Also guard weapons/armor with high baseline stats or Expert/Master negative rarity
+		bool explicitPreHmRare = item.rare >= ItemRarityID.White && item.rare <= ItemRarityID.Orange;
 		if (item.rare < ItemRarityID.White)
 		{
 			if (item.value >= 500000) floor = Math.Max(floor, plantera);
 			else if (item.value >= 200000) floor = Math.Max(floor, mech);
 			else if (item.value >= 75000) floor = Math.Max(floor, wof + 0.05f);
 		}
-		if (item.damage >= 180 || item.defense >= 28)
+		if (explicitPreHmRare)
+		{
+			if (item.damage >= 55 || item.defense >= 11)
+				floor = Math.Max(floor, Math.Min(wof - 0.1f, Math.Max(evil + 0.3f, 3.5f)));
+		}
+		else if (item.damage >= 180 || item.defense >= 28)
 			floor = Math.Max(floor, cultist);
 		else if (item.damage >= 90 || item.defense >= 18)
 			floor = Math.Max(floor, mech);
@@ -1125,6 +1188,7 @@ public sealed class ProgressionGraph
 
 	private static float EstimateRawWorldItemStage(Item item, BossCatalog catalog)
 	{
+		float evil = catalog.GetProgressionForNpc(NPCID.EaterofWorldsHead, 3f);
 		float wof = catalog.WallOfFleshProgression;
 		float skel = catalog.GetProgressionForNpc(NPCID.SkeletronHead, 5f);
 		float mech = catalog.GetProgressionForNpc(NPCID.TheDestroyer, wof + 2f);
@@ -1150,7 +1214,13 @@ public sealed class ProgressionGraph
 		};
 
 		// Guard against modded items with custom/high rare values or missing rarity
-		if (item.damage >= 180 || item.defense >= 28)
+		bool explicitPreHmRare = item.rare >= ItemRarityID.White && item.rare <= ItemRarityID.Orange;
+		if (explicitPreHmRare)
+		{
+			if (item.damage >= 55 || item.defense >= 11)
+				byRare = Math.Max(byRare, Math.Min(wof - 0.1f, Math.Max(evil + 0.3f, 3.5f)));
+		}
+		else if (item.damage >= 180 || item.defense >= 28)
 			byRare = Math.Max(byRare, cultist);
 		else if (item.damage >= 90 || item.defense >= 18)
 			byRare = Math.Max(byRare, mech);
@@ -1167,6 +1237,19 @@ public sealed class ProgressionGraph
 			.Take(4)
 			.Select(x => x.stack > 1 ? $"{x.Name} x{x.stack}" : x.Name);
 		string suffix = r.requiredItem.Count > 4 ? ", ..." : string.Empty;
-		return "Craft: " + string.Join(" + ", ings) + suffix;
+		string text = "Craft: " + string.Join(" + ", ings) + suffix;
+
+		if (r.Conditions != null && r.Conditions.Count > 0)
+		{
+			var condTexts = r.Conditions
+				.Select(c => c?.Description?.Value)
+				.Where(s => !string.IsNullOrWhiteSpace(s) && !s.Contains("Mods.", StringComparison.Ordinal))
+				.Take(2)
+				.ToList();
+			if (condTexts.Count > 0)
+				text += " [" + string.Join(", ", condTexts) + "]";
+		}
+
+		return text;
 	}
 }

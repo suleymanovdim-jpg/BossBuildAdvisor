@@ -121,6 +121,7 @@ public sealed class BuildRecommender
 
 		SelectWeaponsAndAmmo(rec, availableItems, targetStage, targetClass, cutoff);
 		SelectArmor(rec, availableItems, targetStage, targetClass, cutoff, allowHardmode, options);
+		EnsureArmorSignatureWeapons(rec, availableItems, targetClass, cutoff);
 		SelectAccessories(rec, availableItems, targetStage, targetClass, cutoff);
 		SelectPotions(rec, availableItems, targetClass);
 
@@ -302,7 +303,7 @@ public sealed class BuildRecommender
 
 			float maxUnlock = Math.Max(hPath.UnlockProgression, Math.Max(bPath.UnlockProgression, lPath.UnlockProgression));
 			(ObtainabilityDifficulty setDiff, string diffReason) = CombinePieceDifficulty(hPath, bPath, lPath);
-			float setScore = ScoreArmorSet(set, maxUnlock, cutoff, targetClass, setDiff);
+			float setScore = ScoreArmorSet(set, maxUnlock, cutoff, targetClass, setDiff, rec.PrimaryWeapons);
 
 			var candidate = new ArmorSetCandidate
 			{
@@ -393,8 +394,19 @@ public sealed class BuildRecommender
 			}
 		}
 
-		foreach (ArmorSetCandidate opt in candidates.Take(3))
+		var seenSetKeys = new HashSet<string>();
+		foreach (ArmorSetCandidate opt in candidates)
+		{
+			string dedupKey = opt.IsTrueSet && !string.IsNullOrEmpty(opt.SetBonusSummary)
+				? $"Set:{opt.ModName}:{opt.SetBonusSummary}"
+				: $"Head:{opt.HeadType}";
+			if (!seenSetKeys.Add(dedupKey))
+				continue;
+
 			rec.ArmorOptions.Add(opt);
+			if (rec.ArmorOptions.Count >= 3)
+				break;
+		}
 
 		ArmorSetCandidate primary = rec.ArmorOptions.FirstOrDefault();
 		if (primary != null)
@@ -436,7 +448,7 @@ public sealed class BuildRecommender
 		for (int i = 0; i < candidates.Count; i++)
 			byId.TryAdd(candidates[i].Slot.ItemType, i);
 
-		for (int pass = 0; pass < 3; pass++)
+		for (int pass = 0; pass < 6; pass++)
 		{
 			for (int i = 0; i < candidates.Count; i++)
 			{
@@ -476,7 +488,11 @@ public sealed class BuildRecommender
 			}
 		}
 
-		var sorted = candidates.OrderByDescending(c => c.Slot.Score).ToList();
+		HashSet<int> obsoleteIds = FindStrictlyObsoleteAccessories(candidates, byId, targetClass);
+		var sorted = candidates
+			.Where(c => !obsoleteIds.Contains(c.Slot.ItemType))
+			.OrderByDescending(c => c.Slot.Score)
+			.ToList();
 		var pickedIds = new HashSet<int>();
 
 		int wingsCount = 0;
@@ -520,9 +536,9 @@ public sealed class BuildRecommender
 
 			if (prof.IsWings && altWings >= 2)
 				continue;
-			if (prof.IsMobilityBoots && !prof.IsWings && altBoots >= 2)
+			if (prof.IsMobilityBoots && !prof.IsWings && altBoots >= 1)
 				continue;
-			if (prof.IsDashOrDodge && !prof.IsWings && !prof.IsMobilityBoots && altDash >= 2)
+			if (prof.IsDashOrDodge && !prof.IsWings && !prof.IsMobilityBoots && altDash >= 1)
 				continue;
 
 			rec.AltAccessories.Add(slot);
@@ -532,6 +548,54 @@ public sealed class BuildRecommender
 			if (prof.IsMobilityBoots) altBoots++;
 			if (prof.IsDashOrDodge) altDash++;
 		}
+	}
+
+	private HashSet<int> FindStrictlyObsoleteAccessories(
+		List<(RecommendedSlotItem Slot, ItemSemanticProfile Profile)> candidates,
+		Dictionary<int, int> byId,
+		DamageClass targetClass)
+	{
+		var obsolete = new HashSet<int>();
+
+		foreach ((RecommendedSlotItem srcSlot, ItemSemanticProfile srcProf) in candidates)
+		{
+			float srcAff = srcProf.ClassAffinityScores.GetValueOrDefault(targetClass.Type);
+			var visited = new HashSet<int> { srcSlot.ItemType };
+			var queue = new Queue<(int Id, int Depth)>();
+			queue.Enqueue((srcSlot.ItemType, 0));
+
+			while (queue.Count > 0)
+			{
+				(int cur, int depth) = queue.Dequeue();
+				if (depth >= 6 || !_graph.EquipmentUpgradesTo.TryGetValue(cur, out HashSet<int> nexts))
+					continue;
+
+				foreach (int nextId in nexts)
+				{
+					if (byId.TryGetValue(nextId, out int j))
+					{
+						(RecommendedSlotItem dstSlot, ItemSemanticProfile dstProf) = candidates[j];
+						float dstAff = dstProf.ClassAffinityScores.GetValueOrDefault(targetClass.Type);
+						bool offClassLoss = dstAff + 4f < srcAff && dstAff <= 0f && dstProf.ClassAffinityScores.Count > 0;
+						bool lostWings = srcProf.IsWings && !dstProf.IsWings;
+
+						if (!offClassLoss && !lostWings && dstSlot.Difficulty <= srcSlot.Difficulty)
+						{
+							obsolete.Add(srcSlot.ItemType);
+							break;
+						}
+					}
+
+					if (visited.Add(nextId))
+						queue.Enqueue((nextId, depth + 1));
+				}
+
+				if (obsolete.Contains(srcSlot.ItemType))
+					break;
+			}
+		}
+
+		return obsolete;
 	}
 
 	private void SelectPotions(
@@ -660,7 +724,13 @@ public sealed class BuildRecommender
 		return dpsScore + rarityScore + valueScore + recency + bonus;
 	}
 
-	private float ScoreArmorSet(ArmorSetDefinition set, float maxUnlock, float cutoff, DamageClass targetClass, ObtainabilityDifficulty difficulty)
+	private float ScoreArmorSet(
+		ArmorSetDefinition set,
+		float maxUnlock,
+		float cutoff,
+		DamageClass targetClass,
+		ObtainabilityDifficulty difficulty,
+		List<RecommendedSlotItem> primaryWeapons)
 	{
 		float defWeight = cutoff <= _catalog.WallOfFleshProgression ? 2.4f : 1.5f;
 		float score = set.TotalDefense * defWeight;
@@ -677,12 +747,55 @@ public sealed class BuildRecommender
 		int rLegs = ContentSamples.ItemsByType[set.LegsType].rare;
 		score += NormalizeRarity((rHead + rBody + rLegs) / 3) * 10f;
 
-		if (!string.IsNullOrEmpty(set.SetBonusText))
+		if (set.IsWeaponSpecificBonus)
+		{
+			bool hasMatchingWeapon = IsMeteorArmorSet(set) && primaryWeapons.Any(w => IsSpaceGunSetWeapon(w.ItemType));
+			score += hasMatchingWeapon ? 48f : 12f;
+		}
+		else if (!string.IsNullOrEmpty(set.SetBonusText))
 			score += 42f;
 		else
 			score += 24f;
 
 		return score;
+	}
+
+	private static bool IsMeteorArmorSet(ArmorSetDefinition set) =>
+		set != null && set.HeadType == ItemID.MeteorHelmet && set.BodyType == ItemID.MeteorSuit && set.LegsType == ItemID.MeteorLeggings;
+
+	private static bool IsSpaceGunSetWeapon(int itemType) =>
+		itemType > ItemID.None && itemType < ItemID.Sets.IsSpaceGun.Length && ItemID.Sets.IsSpaceGun[itemType];
+
+	private static void EnsureArmorSignatureWeapons(
+		BuildRecommendation rec,
+		List<(Item Item, ItemUnlockPath Path)> available,
+		DamageClass targetClass,
+		float cutoff)
+	{
+		if (targetClass != DamageClass.Magic || rec.ArmorSet == null || rec.ArmorSet.HeadType != ItemID.MeteorHelmet)
+			return;
+
+		// Meteor armor's signature synergy is zero-mana IsSpaceGun weapons: guarantee Space Gun (or another IsSpaceGun blaster) is present
+		if (rec.PrimaryWeapons.Any(w => IsSpaceGunSetWeapon(w.ItemType)))
+			return;
+
+		(Item sgItem, ItemUnlockPath sgPath) = available
+			.Where(x => IsSpaceGunSetWeapon(x.Item.type))
+			.OrderBy(x => x.Path.Difficulty)
+			.ThenByDescending(x => x.Item.type == ItemID.SpaceGun)
+			.FirstOrDefault();
+		if (sgItem == null || sgPath == null)
+			return;
+
+		float boostedScore = ScoreWeapon(sgItem, sgPath, cutoff, targetClass, false, false) + 34f;
+		RecommendedSlotItem sgSlot = MakeSlot(sgItem.type, "Weapon", boostedScore, sgPath, BuildWeaponReason(sgItem) + " | 0 mana w/ Meteor Armor");
+
+		if (rec.PrimaryWeapons.Count >= 8)
+			rec.PrimaryWeapons[rec.PrimaryWeapons.Count - 1] = sgSlot;
+		else
+			rec.PrimaryWeapons.Add(sgSlot);
+
+		rec.PrimaryWeapons.Sort((a, b) => b.Score.CompareTo(a.Score));
 	}
 
 	private RecommendedSlotItem PickBestArmorPiece(
@@ -769,17 +882,23 @@ public sealed class BuildRecommender
 		if (prof.IsWings)
 		{
 			role = "Wings";
-			score += 55f;
+			score += 74f;
 		}
 		else if (prof.IsDashOrDodge)
 		{
 			role = "Dash / Dodge";
-			score += 46f;
+			score += 56f;
 		}
 		else if (prof.IsMobilityBoots)
 		{
 			role = "Mobility";
-			score += 38f;
+			score += 48f;
+			string tipLower = (item.Name + " " + prof.CombinedTooltipText).ToLowerInvariant();
+			if (tipLower.Contains("allows flight") || tipLower.Contains("rocket boots")
+				|| tipLower.Contains("позволяет летать") || tipLower.Contains("реактивн"))
+				score += 18f;
+			if (tipLower.Contains("movement speed") || tipLower.Contains("скорость движения") || tipLower.Contains("скорость передвижения"))
+				score += 8f;
 		}
 		else if (classAff > 0f)
 		{

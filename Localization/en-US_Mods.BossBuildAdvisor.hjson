@@ -66,11 +66,13 @@ Loot: {
 	UndergroundJungle: Underground Jungle
 	UndergroundDesert: Underground Desert / Extractinator
 	UnderworldEarly: Underworld (early hellevator)
+	MeteorBiome: Meteorite biome (after Evil boss)
 	UndergroundSnow: Underground Snow
 	PyramidRare: Rare Pyramid chest
 	WorldChest: Chests / world exploration
 	WorldGather: Basic gathering / mining
 	WorkbenchCraft: Crafting station
+	SpecialCondition: Special NPC / quest condition
 	ShimmerTransform: Shimmer transmutation
 	TierEstimate: Estimated by tier (mod source hidden)
 }

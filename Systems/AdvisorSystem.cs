@@ -127,7 +127,9 @@ public sealed class AdvisorSystem : ModSystem
 				string acc = string.Join(", ", System.Linq.Enumerable.Select(
 					System.Linq.Enumerable.Take(System.Linq.Enumerable.Concat(ksRec.Accessories, ksRec.AltAccessories), 8),
 					s => $"{Lang.GetItemNameValue(s.ItemType)}({s.Difficulty})"));
-				Mod.Logger.Info($"[DiffCheck@KS:{mode}] Class={ItemTooltipAnalyzer.FormatClassDisplayName(ksRec.TargetClass)} W={ksRec.PrimaryWeapons.Count} ArmOpts=[{arm}] Acc({ksRec.Accessories.Count}+{ksRec.AltAccessories.Count})=[{acc}]");
+				string wpns = string.Join(", ", System.Linq.Enumerable.Select(ksRec.PrimaryWeapons, w =>
+					$"{Lang.GetItemNameValue(w.ItemType)}({ContentSamples.ItemsByType[w.ItemType].damage}dmg,{w.Difficulty}@{w.UnlockProgression:0.##})"));
+				Mod.Logger.Info($"[DiffCheck@KS:{mode}] Class={ItemTooltipAnalyzer.FormatClassDisplayName(ksRec.TargetClass)} W({ksRec.PrimaryWeapons.Count})=[{wpns}] ArmOpts=[{arm}] Acc({ksRec.Accessories.Count}+{ksRec.AltAccessories.Count})=[{acc}]");
 			}
 		}
 
@@ -157,7 +159,20 @@ public sealed class AdvisorSystem : ModSystem
 			return $"{Lang.GetItemNameValue(id)}[C={cTxt}|A={aTxt}]";
 		}
 
-		Mod.Logger.Info($"[ItemInspect] {InspectItem(ItemID.Obsidian)} ; {InspectItem(ItemID.ObsidianHelm)} ; {InspectItem(ItemID.AncientShadowHelmet)} ; {InspectItem(ItemID.Zenith)} ; {InspectItem(ItemID.SailfishBoots)}");
+		Mod.Logger.Info($"[ItemInspect] {InspectItem(ItemID.Obsidian)} ; {InspectItem(ItemID.Meteorite)} ; {InspectItem(ItemID.SpaceGun)} ; {InspectItem(ItemID.RocketBoots)} ; {InspectItem(ItemID.SpectreBoots)} ; {InspectItem(ItemID.LightningBoots)}");
+
+		BossStageInfo st35 = Catalog.AllStages.Find(s => s.Progression >= 3.4f && s.Progression <= 3.6f && s.IsVisibleOnChecklist);
+		if (st35 != null)
+		{
+			foreach (DifficultyFilterMode mode in new[] { DifficultyFilterMode.Comfortable, DifficultyFilterMode.All })
+			{
+				BuildRecommendation mRec = Recommender.Recommend(st35, DamageClass.Magic, new BuildQueryOptions { MaxDifficulty = mode });
+				string mw = string.Join(", ", System.Linq.Enumerable.Select(mRec.PrimaryWeapons, x => Lang.GetItemNameValue(x.ItemType)));
+				string ma = string.Join(" | ", System.Linq.Enumerable.Select(mRec.ArmorOptions, opt => $"{Lang.GetItemNameValue(opt.HeadType)}({opt.TotalDefense}def,{opt.Difficulty})"));
+				string macc = string.Join(", ", System.Linq.Enumerable.Select(System.Linq.Enumerable.Concat(mRec.Accessories, mRec.AltAccessories), FmtSlot));
+				Mod.Logger.Info($"[Stage35Mage:{mode}] Boss={st35.DisplayName}({st35.Progression:0.#}) W=[{mw}] Arm=[{ma}] Acc({mRec.Accessories.Count}+{mRec.AltAccessories.Count})=[{macc}]");
+			}
+		}
 	}
 
 	public void RebuildAnalysis()

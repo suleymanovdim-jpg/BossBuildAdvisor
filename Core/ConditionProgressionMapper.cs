@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using Terraria;
 using Terraria.GameContent.ItemDropRules;
 using Terraria.ID;
+using Terraria.ModLoader;
 
 namespace BossBuildAdvisor.Core;
 
@@ -17,6 +19,8 @@ public readonly struct ConditionGate
 	public bool CrimsonOnly { get; init; }
 	public bool CorruptOnly { get; init; }
 	public bool Unobtainable { get; init; }
+	public bool HasSpecialCondition { get; init; }
+	public string SpecialConditionText { get; init; }
 }
 
 /// <summary>
@@ -96,6 +100,8 @@ public static class ConditionProgressionMapper
 		bool crimson = false;
 		bool corrupt = false;
 		bool unobtainable = false;
+		bool hasSpecial = false;
+		string specialText = null;
 
 		if (conditions == null)
 			return default;
@@ -145,7 +151,27 @@ public static class ConditionProgressionMapper
 			}
 			else
 			{
+				float beforeProg = minProg;
 				ApplyTextHeuristics(key + " " + text, catalog, ref minProg, ref hardmode, ref preHardmode, ref expert, ref master, ref unobtainable);
+
+				bool isCustomModCond = !string.IsNullOrEmpty(key)
+					&& !key.StartsWith("Conditions.", StringComparison.Ordinal)
+					&& !key.StartsWith("Terraria.", StringComparison.Ordinal);
+
+				if (isCustomModCond && !IsBenignEnvironmentCondition(key, text))
+				{
+					hasSpecial = true;
+					if (string.IsNullOrWhiteSpace(specialText))
+					{
+						specialText = !string.IsNullOrWhiteSpace(text) && !text.Contains("Mods.", StringComparison.Ordinal)
+							? text
+							: TrimConditionKey(key);
+					}
+				}
+				else if (minProg > beforeProg && !string.IsNullOrWhiteSpace(text))
+				{
+					specialText ??= text;
+				}
 			}
 		}
 
@@ -159,7 +185,9 @@ public static class ConditionProgressionMapper
 			ClassicOnly = classic,
 			CrimsonOnly = crimson,
 			CorruptOnly = corrupt,
-			Unobtainable = unobtainable
+			Unobtainable = unobtainable,
+			HasSpecialCondition = hasSpecial,
+			SpecialConditionText = specialText ?? string.Empty
 		};
 	}
 
@@ -364,20 +392,21 @@ public static class ConditionProgressionMapper
 				master = true;
 		}
 
-		// Match any modded or vanilla boss name mentioned in a defeat condition
-		bool looksLikeDownedCondition =
-			text.Contains("downed") || text.Contains("defeat") || text.Contains("after ") || text.Contains("post-")
-			|| text.Contains("после ") || text.Contains("побед") || text.Contains("убийств");
+		// Match any modded or vanilla boss name mentioned in progression / forge / quest conditions
+		bool looksLikeBossCondition =
+			text.Contains("downed") || text.Contains("defeat") || text.Contains("after ") || text.Contains("post")
+			|| text.Contains("forged") || text.Contains("repaired") || text.Contains("slain") || text.Contains("kill")
+			|| text.Contains("после ") || text.Contains("побед") || text.Contains("убийств") || text.Contains("кован")
+			|| text.Contains("выков") || text.Contains("почин") || text.Contains("одол");
 
-		if (looksLikeDownedCondition && catalog != null)
+		bool isModCondition = text.Contains("mods.") || !IsBenignEnvironmentCondition(raw, raw);
+
+		if ((looksLikeBossCondition || isModCondition) && catalog != null)
 		{
+			HashSet<string> condTokens = TokenizeIdentifiers(raw);
 			foreach (BossStageInfo stage in catalog.AllStages)
 			{
-				if (string.IsNullOrWhiteSpace(stage.DisplayName) || stage.DisplayName.Length < 4)
-					continue;
-
-				string nameLower = stage.DisplayName.ToLowerInvariant();
-				if (text.Contains(nameLower))
+				if (MatchesBossStage(text, condTokens, stage))
 				{
 					minProg = Math.Max(minProg, stage.Progression + 0.01f);
 					if (stage.Progression >= catalog.WallOfFleshProgression)
@@ -385,5 +414,117 @@ public static class ConditionProgressionMapper
 				}
 			}
 		}
+	}
+
+	private static readonly HashSet<string> GenericBossTokens = new(StringComparer.Ordinal)
+	{
+		"king", "queen", "lord", "slime", "boss", "mini", "event", "spirit", "seed", "wall", "flesh",
+		"giant", "dark", "crimson", "corrupt", "corruption", "shadow", "frost", "moon", "torch", "star",
+		"void", "iron", "gold", "eye", "brain", "eater", "golem", "emperor", "morning", "fowl", "ancient",
+		"duet", "evil", "blood", "goblin", "army", "pirate", "pirates", "martian", "martians", "pumpkin",
+		"король", "королева", "лорд", "слиз", "босс", "дух", "семя", "стена", "плоть", "глаз", "мозг",
+		"голем", "армия", "луна", "кровав", "император", "утро", "древних"
+	};
+
+	private static bool MatchesBossStage(string rawLower, HashSet<string> condTokens, BossStageInfo stage)
+	{
+		if (!string.IsNullOrWhiteSpace(stage.DisplayName) && stage.DisplayName.Length >= 4)
+		{
+			string dispLower = stage.DisplayName.ToLowerInvariant();
+			if (rawLower.Contains(dispLower))
+				return true;
+
+			// Also match distinctive >=5 char stem of localized boss name (handles Russian case endings e.g. "Калавия" -> "Калавией")
+			foreach (string word in TokenizeIdentifiers(stage.DisplayName))
+			{
+				if (word.Length >= 5 && !GenericBossTokens.Contains(word))
+				{
+					string stem = word[..Math.Min(word.Length - 1, Math.Max(5, word.Length - 2))];
+					if (rawLower.Contains(stem))
+						return true;
+				}
+			}
+		}
+
+		// Match internal key / NPC class name tokens (e.g. "Redemption Calavia", "Erhan", "EaglecrestGolem")
+		foreach (string keyTok in TokenizeIdentifiers(stage.Key))
+		{
+			if (keyTok.Length < 5 || GenericBossTokens.Contains(keyTok))
+				continue;
+			if (!string.IsNullOrEmpty(stage.ModSource) && string.Equals(keyTok, stage.ModSource, StringComparison.OrdinalIgnoreCase))
+				continue;
+			if (condTokens.Contains(keyTok))
+				return true;
+		}
+
+		foreach (int npcId in stage.NpcIds)
+		{
+			string internalName = ContentSamples.NpcsByNetId.TryGetValue(npcId, out NPC n) && n?.ModNPC != null
+				? n.ModNPC.Name
+				: NPCID.Search.TryGetName(npcId, out string vName) ? vName : null;
+
+			if (!string.IsNullOrWhiteSpace(internalName))
+			{
+				foreach (string npcTok in TokenizeIdentifiers(internalName))
+				{
+					if (npcTok.Length >= 5 && !GenericBossTokens.Contains(npcTok) && condTokens.Contains(npcTok))
+						return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	private static HashSet<string> TokenizeIdentifiers(string input)
+	{
+		var tokens = new HashSet<string>(StringComparer.Ordinal);
+		if (string.IsNullOrWhiteSpace(input))
+			return tokens;
+
+		var sb = new StringBuilder(32);
+		for (int i = 0; i < input.Length; i++)
+		{
+			char c = input[i];
+			if (!char.IsLetterOrDigit(c))
+			{
+				if (sb.Length > 0)
+				{
+					tokens.Add(sb.ToString());
+					sb.Clear();
+				}
+				continue;
+			}
+
+			if (sb.Length > 0 && char.IsUpper(c) && char.IsLower(input[i - 1]))
+			{
+				tokens.Add(sb.ToString());
+				sb.Clear();
+			}
+			sb.Append(char.ToLowerInvariant(c));
+		}
+
+		if (sb.Length > 0)
+			tokens.Add(sb.ToString());
+
+		return tokens;
+	}
+
+	private static bool IsBenignEnvironmentCondition(string key, string text)
+	{
+		string k = (key + " " + text).ToLowerInvariant();
+		return k.Contains("nearwater") || k.Contains("nearlava") || k.Contains("nearhoney") || k.Contains("nearshimmer")
+			|| k.Contains("inwater") || k.Contains("inhoney") || k.Contains("inrain") || k.Contains("timeday")
+			|| k.Contains("timenight") || k.Contains("graveyard") || k.Contains("alchemy")
+			|| k.Contains("в воде") || k.Contains("рядом с водой") || k.Contains("рядом с лавой")
+			|| k.Contains("рядом с мёдом") || k.Contains("кладбищ") || k.Contains("днём") || k.Contains("ночью");
+	}
+
+	private static string TrimConditionKey(string key)
+	{
+		if (string.IsNullOrWhiteSpace(key))
+			return string.Empty;
+		int lastDot = key.LastIndexOf('.');
+		return lastDot >= 0 && lastDot + 1 < key.Length ? key[(lastDot + 1)..] : key;
 	}
 }

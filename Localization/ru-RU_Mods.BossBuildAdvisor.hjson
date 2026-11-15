@@ -66,11 +66,13 @@ Loot: {
 	UndergroundJungle: Подземные джунгли
 	UndergroundDesert: Подземная пустыня / Экстрактор
 	UnderworldEarly: Преисподняя (ранний спуск)
+	MeteorBiome: Метеорит (после Пожирателя/Мозга)
 	UndergroundSnow: Подземные снега
 	PyramidRare: Редкая пирамида
 	WorldChest: Сундуки / исследование мира
 	WorldGather: Добыча ресурсов в мире
 	WorkbenchCraft: Крафт на верстаке
+	SpecialCondition: Особое условие / квест NPC
 	ShimmerTransform: Шиммер-трансформация
 	TierEstimate: Оценка по тиру (источник скрыт в коде мода)
 }

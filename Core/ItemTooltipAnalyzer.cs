@@ -14,22 +14,18 @@ namespace BossBuildAdvisor.Core;
 public static class ItemTooltipAnalyzer
 {
 	private static readonly Regex PercentRegex = new(@"(\d+(?:[.,]\d+)?)\s*%", RegexOptions.Compiled);
-
-	private static readonly string[] WingsKeywords =
-	[
-		"allows flight", "flight time", "wings", "wing",
-		"позволяет летать", "время полёта", "время полета", "крылья"
-	];
+	private static readonly Regex MaxManaRegex = new(@"(?:max(?:imum)?\s+mana\s+by|максимум\s+ман+ы\s+на)\s+(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
 	private static readonly string[] BootsKeywords =
 	[
-		"rocket boots", "sprint", "run speed", "movement speed", "fast on", "ice skates", "water walking", "lava",
-		"скорость передвижения", "быстро бегать", "спринт", "реактивн", "сапог", "хождение по воде"
+		"rocket boots", "sprint", "run super fast", "run speed", "movement speed", "fast on", "ice skates", "water walking",
+		"boots", "treads",
+		"скорость движения", "скорость передвижения", "бегать", "спринт", "реактивн", "сапог", "ботин", "протектор", "хождение по воде", "ходить по воде"
 	];
 
 	private static readonly string[] DashKeywords =
 	[
-		"dash", "double tap", "dodge", "immune", "invincibility", "shadow dodge",
+		"dash", "double tap", "dodge", "invincibility", "shadow dodge",
 		"рывок", "двойное нажатие", "уклон", "неуязвим"
 	];
 
@@ -52,7 +48,7 @@ public static class ItemTooltipAnalyzer
 	private static readonly string[] RangedKeywords =
 	[
 		"ranged", "ammo", "arrow", "bullet", "bow", "gun",
-		"дальнего боя", "дальний бой", "стрелков", "стрелами", "стрельб", "арбалет", "пули", "пуль", "патрон", "боеприпас"
+		"дальнего боя", "дальний бой", "стрелков", "стрелами", "стрелы", "стрел ", "стрельб", "арбалет", "пули", "пуль", "патрон", "боеприпас", "луков"
 	];
 
 	private static readonly string[] MagicKeywords =
@@ -117,7 +113,8 @@ public static class ItemTooltipAnalyzer
 		{
 			ItemType = item.type,
 			CombinedTooltipText = tip,
-			IsWings = item.wingSlot > 0 || ContainsAny(lower, WingsKeywords),
+			// Only real equipped wings set wingSlot > 0; rocket/running boots with "Allows flight" text must remain Mobility Boots
+			IsWings = item.wingSlot > 0,
 			IsMobilityBoots = ContainsAny(lower, BootsKeywords),
 			IsDashOrDodge = ContainsAny(lower, DashKeywords),
 			IsSurvivability = ContainsAny(lower, SurvivabilityKeywords) || item.defense > 0,
@@ -177,7 +174,12 @@ public static class ItemTooltipAnalyzer
 		else if (dc.CountsAsClass(DamageClass.Ranged) && ContainsAny(lower, RangedKeywords))
 			score += 24f + pctBoost;
 		else if (dc.CountsAsClass(DamageClass.Magic) && ContainsAny(lower, MagicKeywords))
-			score += 24f + pctBoost;
+		{
+			float manaBonus = Math.Clamp(ExtractMaxMana(lower) * 0.2f, 0f, 12f);
+			if (lower.Contains("mana usage") || lower.Contains("mana cost") || lower.Contains("в мане") || lower.Contains("расход маны"))
+				manaBonus += 6f;
+			score += 24f + pctBoost + manaBonus;
+		}
 		else if (dc.CountsAsClass(DamageClass.Summon) && ContainsAny(lower, SummonKeywords))
 			score += 24f + pctBoost + profile.SummonSlotBonus * 18f + profile.SentrySlotBonus * 8f;
 
@@ -244,6 +246,17 @@ public static class ItemTooltipAnalyzer
 				best = Math.Max(best, v);
 		}
 		return best;
+	}
+
+	private static float ExtractMaxMana(string lower)
+	{
+		float total = 0f;
+		foreach (Match m in MaxManaRegex.Matches(lower))
+		{
+			if (float.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v))
+				total += v;
+		}
+		return total;
 	}
 
 	public static bool ContainsAny(string text, string[] terms)

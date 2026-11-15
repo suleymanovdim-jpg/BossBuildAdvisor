@@ -16,6 +16,7 @@ public sealed class ArmorSetDefinition
 	public int TotalDefense { get; init; }
 	public string ModName { get; init; } = "Terraria";
 	public string SetBonusText { get; init; } = string.Empty;
+	public bool IsWeaponSpecificBonus { get; init; }
 	public ItemSemanticProfile CombinedProfile { get; init; }
 }
 
@@ -163,6 +164,9 @@ public sealed class ArmorSetAnalyzer
 		combinedProfile.SentrySlotBonus = pHead.SentrySlotBonus + pBody.SentrySlotBonus + pLegs.SentrySlotBonus;
 		combinedProfile.IsSurvivability = pHead.IsSurvivability || pBody.IsSurvivability || pLegs.IsSurvivability;
 
+		bool isWeaponSpecific = (head.type == ItemID.MeteorHelmet && body.type == ItemID.MeteorSuit && legs.type == ItemID.MeteorLeggings)
+			|| IsWeaponSpecificSetBonus(setBonusText);
+
 		for (int i = 0; i < DamageClassLoader.DamageClassCount; i++)
 		{
 			float sum = 0f;
@@ -170,7 +174,7 @@ public sealed class ArmorSetAnalyzer
 			if (pBody.ClassAffinityScores.TryGetValue(i, out float bVal)) sum += bVal;
 			if (pLegs.ClassAffinityScores.TryGetValue(i, out float lVal)) sum += lVal;
 
-			if (!string.IsNullOrWhiteSpace(setBonusText))
+			if (!string.IsNullOrWhiteSpace(setBonusText) && !isWeaponSpecific)
 			{
 				DamageClass dc = DamageClassLoader.GetDamageClass(i);
 				string bonusLower = setBonusText.ToLowerInvariant();
@@ -195,8 +199,23 @@ public sealed class ArmorSetAnalyzer
 			TotalDefense = head.defense + body.defense + legs.defense,
 			ModName = modName,
 			SetBonusText = setBonusText,
+			IsWeaponSpecificBonus = isWeaponSpecific,
 			CombinedProfile = combinedProfile
 		});
+	}
+
+	private static bool IsWeaponSpecificSetBonus(string setBonusText)
+	{
+		if (string.IsNullOrWhiteSpace(setBonusText))
+			return false;
+
+		string lower = setBonusText.ToLowerInvariant();
+		return lower.Contains("space gun")
+			|| lower.Contains("космическая пушка")
+			|| lower.Contains("0 mana")
+			|| lower.Contains("0 маны")
+			|| lower.Contains("стоит 0")
+			|| lower.Contains("не расходует ману");
 	}
 
 	private static void AddToBucket(Dictionary<string, List<Item>> dict, string key, Item item)
