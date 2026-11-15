@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$projDir = $PSScriptRoot
+$projDir = $PSScriptRoot.TrimEnd('\', '/')
 $tmlDir = if ($env:TML_DIR) { $env:TML_DIR } else { Join-Path ${env:ProgramFiles(x86)} "Steam\steamapps\common\tModLoader" }
 $tmlDotnet = Join-Path $tmlDir "dotnet\dotnet.exe"
 
@@ -12,7 +12,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Push-Location $tmlDir
 try {
-    & $tmlDotnet tModLoader.dll -server -build "$projDir\" -eac (Join-Path $projDir "bin\Release\net8.0\BossBuildAdvisor.dll") -define "TRACE;JETBRAINS_ANNOTATIONS;TML_2026_09;RELEASE;NET;NET8_0;NETCOREAPP" -unsafe false
+    & $tmlDotnet tModLoader.dll -server -build $projDir -eac (Join-Path $projDir "bin\Release\net8.0\BossBuildAdvisor.dll") -define "TRACE;JETBRAINS_ANNOTATIONS;TML_2026_09;RELEASE;NET;NET8_0;NETCOREAPP" -unsafe false
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 finally {

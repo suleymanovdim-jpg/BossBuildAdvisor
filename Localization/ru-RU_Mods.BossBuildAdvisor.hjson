@@ -39,30 +39,79 @@ UI: {
 	UnlockStage: Доступно с этапа <= {0:0.0} ({1})
 	SourcePrefix: Где взять: {0}
 	ReasonsPrefix: Почему выбран: {0}
-	OpenButtonTooltip: Открыть советник билдов (Boss Build Advisor)
-	SlotsHeader: Слотов: {0}+{1}
+	OpenButtonTooltip: "Открыть советник билдов [{0}]"
+	SlotsHeader: "Слотов: {0}+{1}"
+	ClassAuto: Авто
+	TagEvent: Ивент
+	TagMini: Мини
+	StagePrefix: "Этап {0:0.#}"
+	ArmorSetFromMod: "Сет [{0}]"
+	SlotTagHead: Шлем
+	SlotTagBody: Нагр
+	SlotTagLegs: Пон
+	SlotTagWing: Крыл
+	SlotTagDash: Рывок
+	SlotTagBoot: Скор
+	SlotTagWhip: Хлыст
+	SlotTagSentry: Тур
+	SlotTagPet: Пет
+	SlotTagAmmo: Патр
+	SlotTagDef: Защ
+	SlotTagHP: HP
+}
+
+Recommender: {
+	RoleClassBoost: "Усиление: {0}"
+	RoleWhip: Хлыст
+	RoleSentry: Турель
+	RoleMinion: Призыв
+	RoleWeapon: Оружие
+	RoleSupportSentry: Доп. турель
+	RoleFreeMinion: Бесплатный миньон
+	RoleAmmo: Боеприпасы
+	RoleHead: Шлем
+	RoleBody: Нагрудник
+	RoleLegs: Поножи
+	RoleWings: Крылья
+	RoleDash: Рывок / Уклонение
+	RoleMobility: Мобильность
+	RoleDefense: Защита / Реген
+	RoleCombatUtility: Боевая утилита
+	RoleHealing: Лечение
+	RoleBuff: Бафф
+	ModMixed: Сборный
+	ReasonFreeSentry: "Доп. турель (1 слот, {0} ур.)"
+	ReasonFreeMinion: "Доп. миньон (1 слот, {0} ур.)"
+	ReasonAmmo: "Лучшие боеприпасы ({0} ур.)"
+	ReasonArmorPiece: "{0} защ. | {1}"
+	ReasonArmorPieceNoTip: "{0} защиты"
+	ReasonHealing: "Восстанавливает {0} HP"
+	ReasonDefense: "{0} защиты"
+	ReasonWeaponDps: "{0} ур. | ~{1} баз. DPS | {2}"
+	ReasonMeteorSynergy: "0 маны с Метеоритной бронёй"
 }
 
 Loot: {
-	BossNamedDrop: Дроп с босса {0}
-	UnavailableBoss: Недоступный / секретный ивент ({0})
-	HiddenEvent: Скрытый / опциональный босс ({0})
+	BossNamedDrop: "Дроп с босса ({0})"
+	UnavailableBoss: "Недоступный / секретный ивент ({0})"
+	HiddenEvent: "Скрытый / опциональный босс ({0})"
 	BossDrop: Дроп с босса
-	BossRareDrop: Редкий дроп с босса ({0:0.#}%)
-	RareDrop: Редкий дроп ({0:0.#}%)
-	VeryRareDrop: Очень редкий фарм ({0:0.#}%)
-	ChanceDrop: Шанс дропа ({0:0.#}%)
-	CommonDrop: Частый дроп ({0:0.#}%)
+	BossRareDrop: "Редкий дроп с босса ({0:0.#}%)"
+	RareDrop: "Редкий дроп ({0:0.#}%)"
+	VeryRareDrop: "Очень редкий фарм ({0:0.#}%)"
+	ChanceDrop: "Шанс дропа ({0:0.#}%)"
+	CommonDrop: "Частый дроп ({0:0.#}%)"
 	DropGeneric: Обычный дроп
+	SeasonalDrop: Сезонный ивент / дроп
 	LockBox: Ключ данжа / преисподней
 	DungeonCrate: Ящик с рыбалки в данже
 	HardmodeCrate: Хардмод-ящик с рыбалки
 	BasicCrate: Рыбалка (базовый ящик)
 	BiomeCrate: Редкий ящик с рыбалки (RNG)
-	ShopBuy: Покупка у {0}
+	ShopBuy: "Покупка у NPC ({0})"
 	TravellingShop: Странствующий торговец (случайный завоз)
-	ShopExpensiveEarly: Дорогая покупка на раннем этапе ({0})
-	ShopMidCost: Недешёвая покупка у {0}
+	ShopExpensiveEarly: "Дорогая покупка на раннем этапе ({0})"
+	ShopMidCost: "Недешёвая покупка у NPC ({0})"
 	UndergroundJungle: Подземные джунгли
 	UndergroundDesert: Подземная пустыня / Экстрактор
 	UnderworldEarly: Преисподняя (ранний спуск)
@@ -75,4 +124,26 @@ Loot: {
 	SpecialCondition: Особое условие / квест NPC
 	ShimmerTransform: Шиммер-трансформация
 	TierEstimate: Оценка по тиру (источник скрыт в коде мода)
+	SourceTierEstimate: Оценка по уровню прогрессии
+	SourceBossDrop: "Дроп с босса ({0})"
+	SourceFromBag: "{0} (Мешок с сокровищами: {1})"
+	SourceGlobalDrop: "Общий дроп с врагов ({0:0.#}%)"
+	SourceNpcDrop: "{0} ({1:0.#}%)"
+	SourceLockBox: Золотой / обсидиановый ларец
+	SourceDungeonCrate: Ящик данжа / острожный ящик
+	SourceHardmodeCrate: Хардмодный ящик с рыбалки
+	SourceLavaCrate: Обсидиановый ящик / ящик адского камня
+	SourceBasicCrate: Ящик с рыбалки (дерево / железо / золото)
+	SourceBiomeCrate: Биомный ящик с рыбалки
+	SourceGoodieBag: Мешок с сюрпризом (Хэллоуин)
+	SourcePresent: Подарок (Новый год)
+	SourceFishingBag: Добыча с рыбалки / устриц
+	SourceSoldBy: "Продаёт: {0}"
+	SourceMeteor: Добыча метеорита
+	SourceUnderworld: Добыча в Преисподней
+	SourceWorld: Сундуки / сбор в мире
+	SourceInsideBag: "Внутри: {0}"
+	SourceShimmer: "Шиммер: {0}"
+	SourceShimmerML: "Шиммер (после Лунного лорда): {0}"
+	SourceCraft: "Крафт: {0}"
 }

@@ -31,6 +31,8 @@ public sealed class ArmorSetAnalyzer
 	{
 		Sets.Clear();
 
+		var allHeads = new List<Item>();
+		var allBodies = new List<Item>();
 		var headsByMod = new Dictionary<string, List<Item>>();
 		var bodiesByMod = new Dictionary<string, List<Item>>();
 		var legsByMod = new Dictionary<string, List<Item>>();
@@ -41,85 +43,183 @@ public sealed class ArmorSetAnalyzer
 				continue;
 
 			string modName = item.ModItem?.Mod?.Name ?? "Terraria";
-			if (item.headSlot >= 0) AddToBucket(headsByMod, modName, item);
-			if (item.bodySlot >= 0) AddToBucket(bodiesByMod, modName, item);
-			if (item.legSlot >= 0) AddToBucket(legsByMod, modName, item);
+			if (item.headSlot >= 0)
+			{
+				allHeads.Add(item);
+				AddToBucket(headsByMod, modName, item);
+			}
+			if (item.bodySlot >= 0)
+			{
+				allBodies.Add(item);
+				AddToBucket(bodiesByMod, modName, item);
+			}
+			if (item.legSlot >= 0)
+				AddToBucket(legsByMod, modName, item);
 		}
+
+		var seenSets = new HashSet<(int Head, int Body, int Legs)>();
 
 		DiscoverVanillaSets(
 			headsByMod.GetValueOrDefault("Terraria"),
 			bodiesByMod.GetValueOrDefault("Terraria"),
-			legsByMod.GetValueOrDefault("Terraria"));
+			legsByMod.GetValueOrDefault("Terraria"),
+			seenSets);
 
-		foreach (string modName in headsByMod.Keys)
-		{
-			if (modName == "Terraria")
-				continue;
-
-			DiscoverModdedSets(
-				modName,
-				headsByMod.GetValueOrDefault(modName),
-				bodiesByMod.GetValueOrDefault(modName),
-				legsByMod.GetValueOrDefault(modName));
-		}
+		DiscoverModdedSets(allHeads, allBodies, headsByMod, bodiesByMod, legsByMod, seenSets);
 
 		mod.Logger.Info($"[BossBuildAdvisor] Discovered {Sets.Count} armor sets across loaded mods.");
 	}
 
-	private void DiscoverVanillaSets(List<Item> heads, List<Item> bodies, List<Item> legs)
+	private void DiscoverVanillaSets(List<Item> heads, List<Item> bodies, List<Item> legs, HashSet<(int, int, int)> seenSets)
 	{
 		if (heads == null || bodies == null || legs == null)
 			return;
 
-		var bodyBySlot = bodies.GroupBy(x => x.bodySlot).ToDictionary(g => g.Key, g => g.ToList());
-		var legsBySlot = legs.GroupBy(x => x.legSlot).ToDictionary(g => g.Key, g => g.ToList());
+		var emptyLeg = new Item();
+		emptyLeg.TurnToAir();
 
 		foreach (Item h in heads)
 		{
 			foreach (Item b in bodies)
 			{
+				if (h.type == b.type)
+					continue;
+
+				// Wizard Hat (14) and Magic Hat (159) form 2-piece robe sets regardless of leg slot
+				if (h.headSlot is 14 or 159)
+				{
+					string robeBonus = GetVanillaArmorSetBonus(h.headSlot, b.bodySlot, -1);
+					if (robeBonus != null && seenSets.Add((h.type, b.type, ItemID.None)))
+						AddSet(h, b, emptyLeg, "Terraria", robeBonus);
+					continue;
+				}
+
 				if (Math.Abs(h.rare - b.rare) > 3)
 					continue;
 
 				foreach (Item l in legs)
 				{
-					if (Math.Abs(b.rare - l.rare) > 3)
+					if (l.type == h.type || l.type == b.type || Math.Abs(b.rare - l.rare) > 3)
 						continue;
 
 					string bonus = GetVanillaArmorSetBonus(h.headSlot, b.bodySlot, l.legSlot);
-					if (bonus != null)
-					{
+					if (bonus != null && seenSets.Add((h.type, b.type, l.type)))
 						AddSet(h, b, l, "Terraria", bonus);
+				}
+			}
+		}
+	}
+
+	private void DiscoverModdedSets(
+		List<Item> allHeads,
+		List<Item> allBodies,
+		Dictionary<string, List<Item>> headsByMod,
+		Dictionary<string, List<Item>> bodiesByMod,
+		Dictionary<string, List<Item>> legsByMod,
+		HashSet<(int, int, int)> seenSets)
+	{
+		var emptyLeg = new Item();
+		emptyLeg.TurnToAir();
+		var twoPiecePairs = new HashSet<(int Head, int Body)>();
+
+		// Pass 1: Detect 2-piece / robe sets globally (supports cross-mod robes like WizardHat + ModRobe or ModWitchHat + VanillaRobe)
+		foreach (Item h in allHeads)
+		{
+			foreach (Item b in allBodies)
+			{
+				if (h.type == b.type || (h.ModItem == null && b.ModItem == null))
+					continue;
+
+				if (IsModArmorSetSafe(h, b, emptyLeg))
+				{
+					twoPiecePairs.Add((h.type, b.type));
+					if (seenSets.Add((h.type, b.type, ItemID.None)))
+					{
+						string modName = ResolveSetModName(h, b, null);
+						string bonusText = ResolveModdedSetBonusText(h, b, null);
+						AddSet(h, b, emptyLeg, modName, bonusText);
+					}
+				}
+			}
+		}
+
+		// Pass 2: Detect 3-piece sets within each mod (without artificial rarity cutoffs, forbidding robe self-pairing)
+		foreach (var kv in headsByMod)
+		{
+			string modName = kv.Key;
+			if (modName == "Terraria")
+				continue;
+
+			List<Item> bodies = bodiesByMod.GetValueOrDefault(modName);
+			List<Item> legs = legsByMod.GetValueOrDefault(modName);
+			if (bodies == null || legs == null)
+				continue;
+
+			foreach (Item h in kv.Value)
+			{
+				foreach (Item b in bodies)
+				{
+					if (h.type == b.type || twoPiecePairs.Contains((h.type, b.type)))
+						continue;
+
+					foreach (Item l in legs)
+					{
+						if (l.type == h.type || l.type == b.type)
+							continue;
+
+						if (IsModArmorSetSafe(h, b, l) && seenSets.Add((h.type, b.type, l.type)))
+						{
+							string bonusText = ResolveModdedSetBonusText(h, b, l);
+							AddSet(h, b, l, modName, bonusText);
+						}
 					}
 				}
 			}
 		}
 	}
 
-	private void DiscoverModdedSets(string modName, List<Item> heads, List<Item> bodies, List<Item> legs)
+	private static string ResolveSetModName(Item head, Item body, Item legs)
 	{
-		if (heads == null || bodies == null || legs == null)
-			return;
+		return head?.ModItem?.Mod?.Name
+			?? body?.ModItem?.Mod?.Name
+			?? legs?.ModItem?.Mod?.Name
+			?? "Terraria";
+	}
 
-		foreach (Item h in heads)
+	private static string ResolveModdedSetBonusText(Item head, Item body, Item legs)
+	{
+		string text = TryFindModItemSetBonus(head?.ModItem)
+			?? TryFindModItemSetBonus(body?.ModItem)
+			?? TryFindModItemSetBonus(legs?.ModItem);
+		return text ?? string.Empty;
+	}
+
+	private static string TryFindModItemSetBonus(ModItem modItem)
+	{
+		if (modItem?.Mod == null)
+			return null;
+
+		string mod = modItem.Mod.Name;
+		string name = modItem.Name;
+		string[] keys =
+		[
+			$"Mods.{mod}.Items.{name}.SetBonus",
+			$"Mods.{mod}.Items.{name}.Set",
+			$"Mods.{mod}.Items.{name}.SetBonusTooltip",
+			$"Mods.{mod}.SetBonus.{name}",
+			$"Mods.{mod}.ArmorSetBonus.{name}"
+		];
+
+		for (int i = 0; i < keys.Length; i++)
 		{
-			foreach (Item b in bodies)
+			if (Language.Exists(keys[i]))
 			{
-				if (Math.Abs(h.rare - b.rare) > 2)
-					continue;
-
-				foreach (Item l in legs)
-				{
-					if (Math.Abs(b.rare - l.rare) > 2)
-						continue;
-
-					if (IsModArmorSetSafe(h, b, l))
-					{
-						AddSet(h, b, l, modName, string.Empty);
-					}
-				}
+				string val = Language.GetTextValue(keys[i]);
+				if (!string.IsNullOrWhiteSpace(val) && val != keys[i])
+					return val;
 			}
 		}
+		return null;
 	}
 
 	private static bool IsModArmorSetSafe(Item head, Item body, Item legs)
@@ -130,7 +230,7 @@ public sealed class ArmorSetAnalyzer
 				return true;
 			if (body.ModItem != null && body.ModItem.IsArmorSet(head, body, legs))
 				return true;
-			if (legs.ModItem != null && legs.ModItem.IsArmorSet(head, body, legs))
+			if (legs != null && !legs.IsAir && legs.ModItem != null && legs.ModItem.IsArmorSet(head, body, legs))
 				return true;
 		}
 		catch
@@ -141,11 +241,11 @@ public sealed class ArmorSetAnalyzer
 
 	private void AddSet(Item head, Item body, Item legs, string modName, string setBonusText)
 	{
-		var combinedItem = new Item();
+		Item legsSafe = (legs == null || legs.IsAir) ? null : legs;
 		string combinedText = string.Join(" | ",
 			ItemTooltipAnalyzer.GetTooltipText(head),
 			ItemTooltipAnalyzer.GetTooltipText(body),
-			ItemTooltipAnalyzer.GetTooltipText(legs),
+			legsSafe != null ? ItemTooltipAnalyzer.GetTooltipText(legsSafe) : string.Empty,
 			setBonusText);
 
 		var combinedProfile = new ItemSemanticProfile
@@ -154,49 +254,46 @@ public sealed class ArmorSetAnalyzer
 			CombinedTooltipText = combinedText
 		};
 
-		// Merge piece semantic profiles + setBonus text
 		var pHead = ItemTooltipAnalyzer.Analyze(head);
 		var pBody = ItemTooltipAnalyzer.Analyze(body);
-		var pLegs = ItemTooltipAnalyzer.Analyze(legs);
+		var pLegs = legsSafe != null ? ItemTooltipAnalyzer.Analyze(legsSafe) : null;
 
-		combinedProfile.GenericBonusScore = pHead.GenericBonusScore + pBody.GenericBonusScore + pLegs.GenericBonusScore;
-		combinedProfile.SummonSlotBonus = pHead.SummonSlotBonus + pBody.SummonSlotBonus + pLegs.SummonSlotBonus;
-		combinedProfile.SentrySlotBonus = pHead.SentrySlotBonus + pBody.SentrySlotBonus + pLegs.SentrySlotBonus;
-		combinedProfile.IsSurvivability = pHead.IsSurvivability || pBody.IsSurvivability || pLegs.IsSurvivability;
-
-		bool isWeaponSpecific = (head.type == ItemID.MeteorHelmet && body.type == ItemID.MeteorSuit && legs.type == ItemID.MeteorLeggings)
+		bool isWeaponSpecific = (head.type == ItemID.MeteorHelmet && body.type == ItemID.MeteorSuit && legsSafe?.type == ItemID.MeteorLeggings)
 			|| IsWeaponSpecificSetBonus(setBonusText);
 
-		for (int i = 0; i < DamageClassLoader.DamageClassCount; i++)
-		{
-			float sum = 0f;
-			if (pHead.ClassAffinityScores.TryGetValue(i, out float hVal)) sum += hVal;
-			if (pBody.ClassAffinityScores.TryGetValue(i, out float bVal)) sum += bVal;
-			if (pLegs.ClassAffinityScores.TryGetValue(i, out float lVal)) sum += lVal;
+		ItemSemanticProfile pSet = (!string.IsNullOrWhiteSpace(setBonusText) && !isWeaponSpecific)
+			? ItemTooltipAnalyzer.AnalyzeSetBonus(setBonusText)
+			: null;
 
-			if (!string.IsNullOrWhiteSpace(setBonusText) && !isWeaponSpecific)
-			{
-				DamageClass dc = DamageClassLoader.GetDamageClass(i);
-				string bonusLower = setBonusText.ToLowerInvariant();
-				if (dc != null && dc != DamageClass.Default)
-				{
-					if (dc.CountsAsClass(DamageClass.Melee) && (bonusLower.Contains("melee") || bonusLower.Contains("ближн"))) sum += 20f;
-					else if (dc.CountsAsClass(DamageClass.Ranged) && (bonusLower.Contains("ranged") || bonusLower.Contains("стрел") || bonusLower.Contains("дальн") || bonusLower.Contains("боеприпас") || bonusLower.Contains("ammo"))) sum += 20f;
-					else if (dc.CountsAsClass(DamageClass.Magic) && (bonusLower.Contains("magic") || bonusLower.Contains("mana") || bonusLower.Contains("маги") || bonusLower.Contains("ман"))) sum += 20f;
-					else if (dc.CountsAsClass(DamageClass.Summon) && (bonusLower.Contains("minion") || bonusLower.Contains("sentry") || bonusLower.Contains("summon") || bonusLower.Contains("миньон") || bonusLower.Contains("страж") || bonusLower.Contains("призыв"))) sum += 20f;
-				}
-			}
+		combinedProfile.GenericBonusScore = pHead.GenericBonusScore + pBody.GenericBonusScore
+			+ (pLegs?.GenericBonusScore ?? 0f) + (pSet?.GenericBonusScore ?? 0f);
+		combinedProfile.SummonSlotBonus = pHead.SummonSlotBonus + pBody.SummonSlotBonus
+			+ (pLegs?.SummonSlotBonus ?? 0f) + (pSet?.SummonSlotBonus ?? 0f);
+		combinedProfile.SentrySlotBonus = pHead.SentrySlotBonus + pBody.SentrySlotBonus
+			+ (pLegs?.SentrySlotBonus ?? 0f) + (pSet?.SentrySlotBonus ?? 0f);
+		combinedProfile.IsSurvivability = pHead.IsSurvivability || pBody.IsSurvivability
+			|| (pLegs?.IsSurvivability ?? false) || (pSet?.IsSurvivability ?? false);
+		combinedProfile.IsManaUtility = pHead.IsManaUtility || pBody.IsManaUtility
+			|| (pLegs?.IsManaUtility ?? false) || (pSet?.IsManaUtility ?? false);
+		combinedProfile.IsDashOrDodge = pHead.IsDashOrDodge || pBody.IsDashOrDodge
+			|| (pLegs?.IsDashOrDodge ?? false) || (pSet?.IsDashOrDodge ?? false);
+		combinedProfile.IsPureNonCombatUtility = pHead.IsPureNonCombatUtility && pBody.IsPureNonCombatUtility
+			&& (pLegs == null || pLegs.IsPureNonCombatUtility)
+			&& (pSet == null || (pSet.ClassAffinityScores.Count == 0 && pSet.GenericBonusScore <= 0f));
 
-			if (sum > 0f)
-				combinedProfile.ClassAffinityScores[i] = sum;
-		}
+		MergeAffinity(combinedProfile.ClassAffinityScores, pHead.ClassAffinityScores);
+		MergeAffinity(combinedProfile.ClassAffinityScores, pBody.ClassAffinityScores);
+		if (pLegs != null)
+			MergeAffinity(combinedProfile.ClassAffinityScores, pLegs.ClassAffinityScores);
+		if (pSet != null)
+			MergeAffinity(combinedProfile.ClassAffinityScores, pSet.ClassAffinityScores);
 
 		Sets.Add(new ArmorSetDefinition
 		{
 			HeadType = head.type,
 			BodyType = body.type,
-			LegsType = legs.type,
-			TotalDefense = head.defense + body.defense + legs.defense,
+			LegsType = legsSafe?.type ?? ItemID.None,
+			TotalDefense = head.defense + body.defense + (legsSafe?.defense ?? 0),
 			ModName = modName,
 			SetBonusText = setBonusText,
 			IsWeaponSpecificBonus = isWeaponSpecific,
@@ -204,12 +301,18 @@ public sealed class ArmorSetAnalyzer
 		});
 	}
 
+	private static void MergeAffinity(Dictionary<int, float> target, Dictionary<int, float> source)
+	{
+		foreach (var kv in source)
+			target[kv.Key] = target.GetValueOrDefault(kv.Key) + kv.Value;
+	}
+
 	private static bool IsWeaponSpecificSetBonus(string setBonusText)
 	{
 		if (string.IsNullOrWhiteSpace(setBonusText))
 			return false;
 
-		string lower = setBonusText.ToLowerInvariant();
+		string lower = setBonusText.Replace('\u00a0', ' ').ToLowerInvariant();
 		return lower.Contains("space gun")
 			|| lower.Contains("космическая пушка")
 			|| lower.Contains("0 mana")
@@ -230,6 +333,11 @@ public sealed class ArmorSetAnalyzer
 
 	private static string GetVanillaArmorSetBonus(int head, int body, int legs)
 	{
+		string downKey = Language.GetTextValue(Main.ReversedUpDownArmorSetBonuses ? "Key.UP" : "Key.DOWN");
+		if (head == 14 && ((body >= 58 && body <= 63) || body == 167 || body == 213)) return Language.GetTextValue("ArmorSetBonus.Wizard");
+		if (head == 159 && ((body >= 58 && body <= 63) || body == 167 || body == 213)) return Language.GetTextValue("ArmorSetBonus.MagicHat");
+		if ((head == 11 || head == 216) && body == 20 && legs == 19) return Language.GetTextValue("ArmorSetBonus.Mining");
+		if (head == 161 && body == 169 && legs == 104) return Language.GetTextValue("ArmorSetBonus.Angler");
 		if (body == 67 && legs == 56 && head is >= 103 and <= 105) return Language.GetTextValue("ArmorSetBonus.Shroomite");
 		if ((head == 52 && body == 32 && legs == 31) || (head == 53 && body == 33 && legs == 32) || (head == 54 && body == 34 && legs == 33) || (head == 55 && body == 35 && legs == 34) || (head == 71 && body == 47 && legs == 43) || (head == 166 && body == 173 && legs == 108) || (head == 167 && body == 174 && legs == 109)) return Language.GetTextValue("ArmorSetBonus.Wood");
 		if (head == 278 && body == 246 && legs == 234) return Language.GetTextValue("ArmorSetBonus.AshWood");
@@ -276,10 +384,10 @@ public sealed class ArmorSetAnalyzer
 		if (head == 160 && body == 168 && legs == 103) return Language.GetTextValue("ArmorSetBonus.Bee");
 		if (head == 162 && body == 170 && legs == 105) return Language.GetTextValue("ArmorSetBonus.Spider");
 		if (head == 171 && body == 177 && legs == 112) return Language.GetTextValue("ArmorSetBonus.Solar");
-		if (head == 169 && body == 175 && legs == 110) return Language.GetTextValue("ArmorSetBonus.Vortex", "");
+		if (head == 169 && body == 175 && legs == 110) return Language.GetTextValue("ArmorSetBonus.Vortex", downKey);
 		if (head == 170 && body == 176 && legs == 111) return Language.GetTextValue("ArmorSetBonus.Nebula");
-		if (head == 189 && body == 190 && legs == 130) return Language.GetTextValue("ArmorSetBonus.Stardust", "");
-		if (head == 200 && body == 198 && legs == 142) return Language.GetTextValue("ArmorSetBonus.Forbidden", "");
+		if (head == 189 && body == 190 && legs == 130) return Language.GetTextValue("ArmorSetBonus.Stardust", downKey);
+		if (head == 200 && body == 198 && legs == 142) return Language.GetTextValue("ArmorSetBonus.Forbidden", downKey);
 		if (head == 204 && body == 201 && legs == 145) return Language.GetTextValue("ArmorSetBonus.SquireTier2");
 		if (head == 203 && body == 200 && legs == 144) return Language.GetTextValue("ArmorSetBonus.ApprenticeTier2");
 		if (head == 205 && body == 202 && legs is 146 or 147) return Language.GetTextValue("ArmorSetBonus.HuntressTier2");

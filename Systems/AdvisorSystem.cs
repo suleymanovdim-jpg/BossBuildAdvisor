@@ -34,6 +34,9 @@ public sealed class AdvisorSystem : ModSystem
 	private Asset<Texture2D> _buttonTexture;
 	private bool _isOpen;
 	private bool _dataBuilt;
+	private bool _uiNeedsRebuild;
+	private bool _worldRefreshPending;
+	private bool _analysisRebuildPending;
 
 	public bool IsOpen => _isOpen;
 
@@ -50,6 +53,12 @@ public sealed class AdvisorSystem : ModSystem
 		_buttonTexture = null;
 		_userInterface = null;
 		_uiState = null;
+		_isOpen = false;
+		_dataBuilt = false;
+		_uiNeedsRebuild = false;
+		_worldRefreshPending = false;
+		_analysisRebuildPending = false;
+		_lastToggleTick = 0;
 		_bossChecklistReflectionDone = false;
 		_bossLogConfigInstance = null;
 		_bossLogPosProperty = null;
@@ -58,11 +67,21 @@ public sealed class AdvisorSystem : ModSystem
 
 	public override void PostSetupRecipes()
 	{
-		RebuildAnalysis();
-		LogDiagnosticSummary();
+		RebuildAnalysisData();
+		Mod.Logger.Info($"[BossBuildAdvisor] Ready in {Graph.BuildDurationMs} ms: {Catalog.AllStages.Count} stages, {Graph.Items.Count} items, {ArmorSets.Sets.Count} armor sets.");
 	}
 
-	private void LogDiagnosticSummary()
+	public override void OnLocalizationsLoaded()
+	{
+		if (!_dataBuilt)
+			return;
+
+		// Rebuild semantics & UI strings safely on the main thread when culture changes
+		_analysisRebuildPending = true;
+		_uiNeedsRebuild = true;
+	}
+
+	public void DumpDiagnosticsToLog()
 	{
 		if (Recommender == null)
 			return;
@@ -94,7 +113,6 @@ public sealed class AdvisorSystem : ModSystem
 			return $"{Lang.GetItemNameValue(s.ItemType)}({s.RoleTag}:{s.Difficulty}@{s.UnlockProgression:0.##}:{s.SourceSummary})";
 		}
 
-		// Log sample recommendation per distinct mod + key milestones (King Slime, Thorn, Skeletron, WoF, Plantera, Moon Lord)
 		var loggedMods = new HashSet<string>();
 		var milestoneStages = new List<BossStageInfo>();
 		foreach (BossStageInfo stage in Catalog.AllStages)
@@ -115,85 +133,59 @@ public sealed class AdvisorSystem : ModSystem
 			Mod.Logger.Info($"[Sample/Comfort] {stage.ModSource}/{stage.DisplayName} ({stage.Progression:0.#}) -> {ItemTooltipAnalyzer.FormatClassDisplayName(rec.TargetClass)}: Counts(W={rec.PrimaryWeapons.Count},Sup={rec.SupportWeapons.Count},Ammo={rec.AmmoOptions.Count},Arm={rec.ArmorOptions.Count},Acc={rec.Accessories.Count}+{rec.AltAccessories.Count},Pot={rec.BuffPotions.Count}) Wpn=[{w}] Arm=[{armors}] Acc=[{a}]");
 		}
 
-		// Also verify difficulty modes at King Slime + every DamageClass at Wall of Flesh
-		BossStageInfo ksStage = Catalog.AllStages.Find(s => s.NpcIds.Contains(NPCID.KingSlime));
-		if (ksStage != null)
-		{
-			foreach (DifficultyFilterMode mode in new[] { DifficultyFilterMode.Comfortable, DifficultyFilterMode.IncludeHard, DifficultyFilterMode.All })
-			{
-				BuildRecommendation ksRec = Recommender.Recommend(ksStage, null, new BuildQueryOptions { MaxDifficulty = mode });
-				string arm = string.Join(" | ", System.Linq.Enumerable.Select(ksRec.ArmorOptions, opt =>
-					$"{Lang.GetItemNameValue(opt.HeadType)}({opt.TotalDefense}def,{opt.Difficulty})"));
-				string acc = string.Join(", ", System.Linq.Enumerable.Select(
-					System.Linq.Enumerable.Take(System.Linq.Enumerable.Concat(ksRec.Accessories, ksRec.AltAccessories), 8),
-					s => $"{Lang.GetItemNameValue(s.ItemType)}({s.Difficulty})"));
-				string wpns = string.Join(", ", System.Linq.Enumerable.Select(ksRec.PrimaryWeapons, w =>
-					$"{Lang.GetItemNameValue(w.ItemType)}({ContentSamples.ItemsByType[w.ItemType].damage}dmg,{w.Difficulty}@{w.UnlockProgression:0.##})"));
-				Mod.Logger.Info($"[DiffCheck@KS:{mode}] Class={ItemTooltipAnalyzer.FormatClassDisplayName(ksRec.TargetClass)} W({ksRec.PrimaryWeapons.Count})=[{wpns}] ArmOpts=[{arm}] Acc({ksRec.Accessories.Count}+{ksRec.AltAccessories.Count})=[{acc}]");
-			}
-		}
-
-		BossStageInfo wofStage = Catalog.AllStages.Find(s => s.NpcIds.Contains(NPCID.WallofFlesh));
-		if (wofStage != null)
-		{
-			foreach (DamageClass dc in Recommender.GetAvailablePlayableClasses())
-			{
-				BuildRecommendation dcRec = Recommender.Recommend(wofStage, dc, new BuildQueryOptions());
-				string w = string.Join(", ", System.Linq.Enumerable.Select(dcRec.PrimaryWeapons, x => Lang.GetItemNameValue(x.ItemType)));
-				Mod.Logger.Info($"[ClassCheck@WoF] {ItemTooltipAnalyzer.FormatClassDisplayName(dc)} ({dc.FullName}): Weapons=[{w}] Armor={(dcRec.ArmorSet?.IsTrueSet == true ? "Set" : "Mix")}:{dcRec.ArmorSet?.TotalDefense ?? 0}def Acc={dcRec.Accessories.Count}+{dcRec.AltAccessories.Count} Pot={dcRec.BuffPotions.Count}");
-			}
-		}
-
 		if (_uiState != null)
-		{
 			Mod.Logger.Info($"[UILayout] {_uiState.GetLayoutCheckSummary()}");
-		}
-
-		string InspectItem(int id)
-		{
-			if (!Graph.Items.TryGetValue(id, out ItemUnlockInfo i)) return $"{id}:missing";
-			ItemUnlockPath c = i.GetPathFor(DifficultyFilterMode.Comfortable);
-			ItemUnlockPath a = i.GetPathFor(DifficultyFilterMode.All);
-			string cTxt = c == null ? "null" : $"{c.Difficulty}@{c.UnlockProgression:0.##}({c.SourceType}:{c.SourceSummary})";
-			string aTxt = a == null ? "null" : $"{a.Difficulty}@{a.UnlockProgression:0.##}({a.SourceType}:{a.SourceSummary})";
-			return $"{Lang.GetItemNameValue(id)}[C={cTxt}|A={aTxt}]";
-		}
-
-		Mod.Logger.Info($"[ItemInspect] {InspectItem(ItemID.Obsidian)} ; {InspectItem(ItemID.Meteorite)} ; {InspectItem(ItemID.SpaceGun)} ; {InspectItem(ItemID.RocketBoots)} ; {InspectItem(ItemID.SpectreBoots)} ; {InspectItem(ItemID.LightningBoots)}");
-
-		BossStageInfo st35 = Catalog.AllStages.Find(s => s.Progression >= 3.4f && s.Progression <= 3.6f && s.IsVisibleOnChecklist);
-		if (st35 != null)
-		{
-			foreach (DifficultyFilterMode mode in new[] { DifficultyFilterMode.Comfortable, DifficultyFilterMode.All })
-			{
-				BuildRecommendation mRec = Recommender.Recommend(st35, DamageClass.Magic, new BuildQueryOptions { MaxDifficulty = mode });
-				string mw = string.Join(", ", System.Linq.Enumerable.Select(mRec.PrimaryWeapons, x => Lang.GetItemNameValue(x.ItemType)));
-				string ma = string.Join(" | ", System.Linq.Enumerable.Select(mRec.ArmorOptions, opt => $"{Lang.GetItemNameValue(opt.HeadType)}({opt.TotalDefense}def,{opt.Difficulty})"));
-				string macc = string.Join(", ", System.Linq.Enumerable.Select(System.Linq.Enumerable.Concat(mRec.Accessories, mRec.AltAccessories), FmtSlot));
-				Mod.Logger.Info($"[Stage35Mage:{mode}] Boss={st35.DisplayName}({st35.Progression:0.#}) W=[{mw}] Arm=[{ma}] Acc({mRec.Accessories.Count}+{mRec.AltAccessories.Count})=[{macc}]");
-			}
-		}
 	}
 
-	public void RebuildAnalysis()
+	private void RebuildAnalysisData()
 	{
 		Catalog.Build(Mod);
 		Graph.Build(Mod, Catalog);
 		ArmorSets.Build(Mod, Graph);
 		Recommender = new BuildRecommender(Catalog, Graph, ArmorSets);
 		_dataBuilt = true;
+	}
 
-		if (!Main.dedServ)
+	public void RebuildAnalysis()
+	{
+		RebuildAnalysisData();
+		_uiNeedsRebuild = true;
+		EnsureUIInitializedOnMainThread();
+	}
+
+	private void EnsureUIInitializedOnMainThread()
+	{
+		if (Main.dedServ)
+			return;
+
+		if (!_dataBuilt || _analysisRebuildPending)
 		{
-			if (_userInterface == null)
+			_analysisRebuildPending = false;
+			RebuildAnalysisData();
+			_uiNeedsRebuild = true;
+		}
+
+		if (_worldRefreshPending)
+		{
+			_worldRefreshPending = false;
+			if (_isOpen)
+				_uiState?.RefreshAll();
+		}
+
+		if (_userInterface == null || _uiState == null || _uiNeedsRebuild)
+		{
+			_uiNeedsRebuild = false;
+			_userInterface ??= new UserInterface();
+			if (_uiState == null)
 			{
-				_userInterface = new UserInterface();
 				_uiState = new AdvisorUIState(Catalog, Graph, Recommender);
 				_uiState.Activate();
 			}
-			else if (_isOpen)
+			else
 			{
-				_uiState.RefreshAll();
+				_uiState.UpdateDependencies(Catalog, Graph, Recommender);
+				if (_isOpen)
+					_uiState.RefreshAll();
 			}
 		}
 	}
@@ -201,20 +193,23 @@ public sealed class AdvisorSystem : ModSystem
 	public override void OnWorldLoad()
 	{
 		if (!_dataBuilt)
-			RebuildAnalysis();
+			RebuildAnalysisData();
 
-		SetOpen(false);
+		_isOpen = false;
+		_worldRefreshPending = true;
+	}
 
+	public override void OnWorldUnload()
+	{
+		_isOpen = false;
+		_worldRefreshPending = false;
 		if (!Main.dedServ)
 		{
-			Vector2 bcPos = GetBossChecklistButtonPos();
-			int vis = Catalog.AllStages.FindAll(s => s.IsVisibleOnChecklist).Count;
-			string vis12 = string.Join(" -> ", System.Linq.Enumerable.Take(
-				System.Linq.Enumerable.Select(
-					System.Linq.Enumerable.Where(Catalog.AllStages, s => s.IsVisibleOnChecklist),
-					s => $"{(s.IsDowned ? "[v]" : "[ ]")}{s.DisplayName}({s.Progression:0.#})"),
-				12));
-			Mod.Logger.Info($"[WorldCheck] Visible={vis}/{Catalog.AllStages.Count} Top12=[{vis12}] BossLogPos=({bcPos.X:0},{bcPos.Y:0}) BtnLoaded={_buttonTexture?.IsLoaded == true} Keybind={ToggleAdvisorKeybind != null}");
+			Main.QueueMainThreadAction(() =>
+			{
+				_uiState?.OnClosed();
+				_userInterface?.SetState(null);
+			});
 		}
 	}
 
@@ -227,19 +222,25 @@ public sealed class AdvisorSystem : ModSystem
 
 	public void SetOpen(bool open)
 	{
-		if (Main.dedServ || _userInterface == null)
+		if (Main.dedServ)
 			return;
 
-		_isOpen = open;
 		if (open)
 		{
+			EnsureUIInitializedOnMainThread();
+			if (_userInterface == null || _uiState == null)
+				return;
+
+			_isOpen = true;
+			Main.playerInventory = false;
 			_uiState.RefreshAll();
 			_userInterface.SetState(_uiState);
 		}
 		else
 		{
+			_isOpen = false;
 			_uiState?.OnClosed();
-			_userInterface.SetState(null);
+			_userInterface?.SetState(null);
 		}
 	}
 
@@ -248,6 +249,20 @@ public sealed class AdvisorSystem : ModSystem
 	private static object _bossLogConfigInstance;
 	private static PropertyInfo _bossLogPosProperty;
 	private static FieldInfo _bossLogPosField;
+
+	public static bool IsHotkeyBlocked()
+	{
+		return Main.dedServ
+			|| Main.gameMenu
+			|| !Main.hasFocus
+			|| Main.ingameOptionsWindow
+			|| Main.drawingPlayerChat
+			|| Main.editSign
+			|| Main.editChest
+			|| Main.inFancyUI
+			|| Main.mapFullscreen
+			|| Main.CurrentInputTextTakerOverride != null;
+	}
 
 	public void ToggleFromHotkey()
 	{
@@ -262,17 +277,8 @@ public sealed class AdvisorSystem : ModSystem
 
 	public override void PostUpdateInput()
 	{
-		if (Main.dedServ || Main.gameMenu)
-			return;
-
 		// ProcessTriggers does not run while paused (e.g. Autopause + Inventory), so handle paused hotkeys here.
-		if (!Main.gamePaused)
-			return;
-
-		if (Main.drawingPlayerChat || Main.editSign || Main.editChest)
-			return;
-
-		if (Main.CurrentInputTextTakerOverride is UI.BossSearchBox)
+		if (!Main.gamePaused || IsHotkeyBlocked())
 			return;
 
 		ModKeybind keybind = BossBuildAdvisor.ToggleAdvisorKeybind ?? ToggleAdvisorKeybind;
@@ -282,6 +288,12 @@ public sealed class AdvisorSystem : ModSystem
 
 	public override void UpdateUI(GameTime gameTime)
 	{
+		if (Main.dedServ || Main.gameMenu)
+			return;
+
+		if (_worldRefreshPending || _analysisRebuildPending || _uiNeedsRebuild)
+			EnsureUIInitializedOnMainThread();
+
 		if (_isOpen && _userInterface?.CurrentState != null)
 		{
 			_userInterface.Update(gameTime);
@@ -297,7 +309,7 @@ public sealed class AdvisorSystem : ModSystem
 				"BossBuildAdvisor: Inventory Toggle",
 				delegate
 				{
-					if (Main.playerInventory)
+					if (Main.playerInventory && !Main.gameMenu && !Main.ingameOptionsWindow && !Main.inFancyUI && !Main.mapFullscreen)
 						DrawInventoryToggleButton();
 					return true;
 				},
@@ -311,7 +323,7 @@ public sealed class AdvisorSystem : ModSystem
 				"BossBuildAdvisor: Advisor Panel",
 				delegate
 				{
-					if (_isOpen && _userInterface?.CurrentState != null)
+					if (_isOpen && !Main.gameMenu && !Main.ingameOptionsWindow && !Main.inFancyUI && !Main.mapFullscreen && _userInterface?.CurrentState != null)
 						_userInterface.Draw(Main.spriteBatch, Main._drawInterfaceGameTime);
 					return true;
 				},
@@ -358,12 +370,28 @@ public sealed class AdvisorSystem : ModSystem
 		const int h = 34;
 		const int gap = 8;
 
-		// BossChecklist centers its ~34x34 book icon at (screenWidth + bcPos.X, screenHeight + bcPos.Y)
-		int x = (int)Math.Clamp(Main.screenWidth + bcPos.X - 17f - w - gap, 12f, Main.screenWidth - w - 12f);
-		int y = (int)Math.Clamp(Main.screenHeight + bcPos.Y - h * 0.5f, 12f, Main.screenHeight - h - 12f);
+		// BossChecklist stores BossLogPos as the TOP-LEFT offset from (screenWidth, screenHeight) for its 34x38 icon
+		float bookX = Math.Clamp(Main.screenWidth + bcPos.X, 0f, Main.screenWidth - 34f);
+		float bookY = Math.Clamp(Main.screenHeight + bcPos.Y, 0f, Main.screenHeight - 38f);
+		int y = (int)Math.Clamp(bookY + (38f - h) * 0.5f, 8f, Main.screenHeight - h - 8f);
+
+		float leftX = bookX - gap - w;
+		float rightX = bookX + 34f + gap;
+		bool chestOrShop = Main.LocalPlayer != null && (Main.LocalPlayer.chest != -1 || Main.npcShop > 0);
+		bool leftBlocked = leftX < 8f || (chestOrShop && leftX < 520f && y > 235f && y < 480f);
+		float chosenX = leftBlocked && rightX + w <= Main.screenWidth - 8f ? rightX : leftX;
+		int x = (int)Math.Clamp(chosenX, 8f, Main.screenWidth - w - 8f);
 
 		var rect = new Rectangle(x, y, w, h);
-		bool hovered = rect.Contains(Main.MouseScreen.ToPoint());
+		bool advisorBlocking = _isOpen && _uiState != null && _uiState.ContainsMouse;
+		bool inputBlocking = PlayerInput.IgnoreMouseInterface
+			|| advisorBlocking
+			|| (Main.LocalPlayer?.mouseInterface ?? false)
+			|| Main.blockMouse
+			|| Main.drawingPlayerChat
+			|| Main.editSign
+			|| Main.editChest;
+		bool hovered = !inputBlocking && rect.Contains(Main.MouseScreen.ToPoint());
 
 		if (_buttonTexture != null && _buttonTexture.IsLoaded)
 		{
@@ -390,15 +418,17 @@ public sealed class AdvisorSystem : ModSystem
 
 		if (hovered)
 		{
-			Main.LocalPlayer.mouseInterface = true;
+			if (Main.LocalPlayer != null)
+				Main.LocalPlayer.mouseInterface = true;
 			Main.blockMouse = true;
+			Main.HoverItem.TurnToAir();
 
-			string keyLabel = "K";
+			string keyLabel = "-";
 			List<string> keys = ToggleAdvisorKeybind?.GetAssignedKeys();
 			if (keys != null && keys.Count > 0 && !string.IsNullOrWhiteSpace(keys[0]))
 				keyLabel = keys[0];
 
-			string hoverTitle = Language.GetTextValue("Mods.BossBuildAdvisor.UI.Title") + $" [{keyLabel}]";
+			string hoverTitle = string.Format(Language.GetTextValue("Mods.BossBuildAdvisor.UI.OpenButtonTooltip"), keyLabel);
 			Vector2 strSize = FontAssets.MouseText.Value.MeasureString(hoverTitle) * 0.85f;
 			float tx = Math.Clamp(rect.Center.X - strSize.X * 0.5f, 10f, Main.screenWidth - strSize.X - 10f);
 			float ty = Math.Max(8f, rect.Y - 24f);
@@ -406,6 +436,7 @@ public sealed class AdvisorSystem : ModSystem
 
 			if (Main.mouseLeft && Main.mouseLeftRelease)
 			{
+				Main.mouseLeftRelease = false;
 				SoundEngine.PlaySound(_isOpen ? SoundID.MenuClose : SoundID.MenuOpen);
 				ToggleOpen();
 			}

@@ -87,6 +87,7 @@ public sealed class ItemUnlockPath
 	public string DifficultyReason { get; set; } = string.Empty;
 	public float BestDropChance { get; set; } = 1f;
 	public bool RequiresHardmode { get; set; }
+	public bool PreHardmodeOnly { get; set; }
 	public bool ExpertOnly { get; set; }
 	public bool MasterOnly { get; set; }
 	public bool ClassicOnly { get; set; }
@@ -106,6 +107,7 @@ public sealed class ItemUnlockInfo
 	public string DifficultyReason { get; set; } = string.Empty;
 	public float BestDropChance { get; set; } = 1f;
 	public bool RequiresHardmode { get; set; }
+	public bool PreHardmodeOnly { get; set; }
 	public bool ExpertOnly { get; set; }
 	public bool MasterOnly { get; set; }
 	public bool ClassicOnly { get; set; }
@@ -144,6 +146,7 @@ public sealed class ItemUnlockInfo
 		DifficultyReason = best.DifficultyReason;
 		BestDropChance = best.BestDropChance;
 		RequiresHardmode = best.RequiresHardmode;
+		PreHardmodeOnly = best.PreHardmodeOnly;
 		ExpertOnly = best.ExpertOnly;
 		MasterOnly = best.MasterOnly;
 		ClassicOnly = best.ClassicOnly;

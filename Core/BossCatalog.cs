@@ -66,7 +66,8 @@ public sealed class BossCatalog
 		}
 
 		BossStageInfo wof = AllStages.FirstOrDefault(s =>
-			string.Equals(s.Key, "Terraria/WallOfFlesh", StringComparison.OrdinalIgnoreCase)
+			string.Equals(s.Key, "Terraria WallofFlesh", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(s.Key, "Terraria/WallOfFlesh", StringComparison.OrdinalIgnoreCase)
 			|| s.NpcIds.Contains(NPCID.WallofFlesh));
 
 		WallOfFleshProgression = wof != null ? wof.Progression : 7.0f;
@@ -75,6 +76,24 @@ public sealed class BossCatalog
 	public float GetProgressionForNpc(int npcId, float fallback)
 	{
 		return _npcProgression.TryGetValue(npcId, out float p) ? p : fallback;
+	}
+
+	public float GetMechAnyProgression()
+	{
+		float wof = WallOfFleshProgression;
+		float twins = GetProgressionForNpc(NPCID.Retinazer, wof + 2.0f);
+		float dest = GetProgressionForNpc(NPCID.TheDestroyer, wof + 3.0f);
+		float prime = GetProgressionForNpc(NPCID.SkeletronPrime, wof + 4.0f);
+		return Math.Min(twins, Math.Min(dest, prime));
+	}
+
+	public float GetMechAllProgression()
+	{
+		float wof = WallOfFleshProgression;
+		float twins = GetProgressionForNpc(NPCID.Retinazer, wof + 2.0f);
+		float dest = GetProgressionForNpc(NPCID.TheDestroyer, wof + 3.0f);
+		float prime = GetProgressionForNpc(NPCID.SkeletronPrime, wof + 4.0f);
+		return Math.Max(twins, Math.Max(dest, prime));
 	}
 
 	private void TryLoadFromBossChecklist(Mod mod, Mod bossChecklist)
@@ -320,7 +339,14 @@ public sealed class BossCatalog
 		}
 
 		// Skip multi-part boss secondary segments (e.g. Eater of Worlds body/tail, Skeletron hands)
-		// and skip mods already registered with BossChecklist so alternate boss phases/forms are not duplicated.
+		// and duplicate phases that share a registered BossChecklist stage's display name in the same mod.
+		var registeredModNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (BossStageInfo stage in AllStages)
+		{
+			if (!string.IsNullOrWhiteSpace(stage.DisplayName))
+				registeredModNames.Add($"{stage.ModSource}|{stage.DisplayName}");
+		}
+
 		foreach ((int npcId, NPC npc) in ContentSamples.NpcsByNetId)
 		{
 			if (npc == null || !npc.boss || registeredNpcs.Contains(npcId))
@@ -329,15 +355,29 @@ public sealed class BossCatalog
 			if (IsSecondaryBossPart(npcId))
 				continue;
 
-			string modName = npc.ModNPC?.Mod?.Name ?? "Terraria";
-			if (UsedBossChecklist && _checklistModSources.Contains(modName))
+			// In fallback mode, keep Twins unified under Retinazer + Spazmatism
+			if (npcId == NPCID.Spazmatism && ContentSamples.NpcsByNetId.ContainsKey(NPCID.Retinazer))
 				continue;
 
-			float estProg = EstimateBossProgressionFromStats(npc);
-			string key = npc.ModNPC != null ? npc.ModNPC.FullName : $"Terraria/{NPCID.Search.GetName(npcId)}";
+			string modName = npc.ModNPC?.Mod?.Name ?? "Terraria";
 			string display = Lang.GetNPCNameValue(npcId);
 			if (string.IsNullOrWhiteSpace(display))
 				display = npc.TypeName;
+
+			if (UsedBossChecklist && _checklistModSources.Contains(modName))
+			{
+				if (string.Equals(modName, "Terraria", StringComparison.OrdinalIgnoreCase))
+					continue;
+				if (!string.IsNullOrWhiteSpace(display) && registeredModNames.Contains($"{modName}|{display}"))
+					continue;
+			}
+
+			float estProg = EstimateBossProgressionFromStats(npc);
+			string key = npc.ModNPC != null ? npc.ModNPC.FullName : $"Terraria/{NPCID.Search.GetName(npcId)}";
+			bool isTorchGod = npcId == NPCID.TorchGod;
+			var npcList = npcId == NPCID.Retinazer
+				? new List<int> { NPCID.Retinazer, NPCID.Spazmatism }
+				: new List<int> { npcId };
 
 			Func<bool> downed = GetVanillaDownedCheck(npcId);
 
@@ -345,14 +385,14 @@ public sealed class BossCatalog
 			{
 				Key = key,
 				ModSource = modName,
-				DisplayName = display,
+				DisplayName = npcId == NPCID.Retinazer ? Lang.GetNPCNameValue(NPCID.Retinazer) + " / " + Lang.GetNPCNameValue(NPCID.Spazmatism) : display,
 				Progression = estProg,
 				ChecklistOrder = int.MaxValue,
-				IsBoss = true,
+				IsBoss = !isTorchGod,
 				IsMiniboss = false,
-				IsEvent = false,
+				IsEvent = isTorchGod,
 				DownedCheck = downed,
-				NpcIds = new List<int> { npcId }
+				NpcIds = npcList
 			});
 		}
 	}
@@ -384,7 +424,9 @@ public sealed class BossCatalog
 		return npcId is NPCID.EaterofWorldsBody or NPCID.EaterofWorldsTail
 			or NPCID.SkeletronHand or NPCID.PrimeCannon or NPCID.PrimeSaw or NPCID.PrimeVice or NPCID.PrimeLaser
 			or NPCID.WallofFleshEye or NPCID.GolemFistLeft or NPCID.GolemFistRight or NPCID.GolemHeadFree
-			or NPCID.MoonLordHand or NPCID.MoonLordHead or NPCID.MoonLordFreeEye or NPCID.MoonLordCore;
+			or NPCID.MoonLordHand or NPCID.MoonLordHead or NPCID.MoonLordFreeEye
+			or NPCID.MartianSaucer or NPCID.MartianSaucerTurret or NPCID.MartianSaucerCannon
+			or NPCID.PirateShip;
 	}
 
 	private static float EstimateBossProgressionFromStats(NPC npc)
@@ -392,20 +434,23 @@ public sealed class BossCatalog
 		return npc.type switch
 		{
 			NPCID.KingSlime => 1f,
+			NPCID.TorchGod => 1.5f,
 			NPCID.EyeofCthulhu => 2f,
 			NPCID.EaterofWorldsHead or NPCID.BrainofCthulhu => 3f,
 			NPCID.QueenBee => 4f,
 			NPCID.SkeletronHead => 5f,
 			NPCID.Deerclops => 6f,
-			NPCID.WallofFlesh => 9f,
-			NPCID.QueenSlimeBoss => 10f,
-			NPCID.Retinazer or NPCID.Spazmatism => 11.5f,
-			NPCID.TheDestroyer => 11f,
-			NPCID.SkeletronPrime => 12f,
-			NPCID.Plantera => 14f,
-			NPCID.Golem => 15f,
-			NPCID.DukeFishron => 15.5f,
-			NPCID.HallowBoss => 16f,
+			NPCID.WallofFlesh => 7f,
+			NPCID.QueenSlimeBoss => 8f,
+			NPCID.Retinazer or NPCID.Spazmatism => 9f,
+			NPCID.TheDestroyer => 10f,
+			NPCID.SkeletronPrime => 11f,
+			NPCID.Plantera => 12f,
+			NPCID.Golem => 13f,
+			NPCID.MartianSaucerCore => 13.76f,
+			NPCID.DukeFishron => 14f,
+			NPCID.HallowBoss => 15f,
+			NPCID.DD2Betsy => 16f,
 			NPCID.CultistBoss => 17f,
 			NPCID.MoonLordCore => 18f,
 			_ => EstimateModBossProgressionByHp(npc.lifeMax)
@@ -416,12 +461,12 @@ public sealed class BossCatalog
 	{
 		if (lifeMax <= 2500) return 1.8f;
 		if (lifeMax <= 4500) return 3.5f;
-		if (lifeMax <= 7000) return 5.5f;
-		if (lifeMax <= 12000) return 8.5f;
-		if (lifeMax <= 28000) return 10.5f;
-		if (lifeMax <= 60000) return 12.5f;
-		if (lifeMax <= 100000) return 14.5f;
-		if (lifeMax <= 180000) return 16.5f;
+		if (lifeMax <= 7500) return 5.5f;
+		if (lifeMax <= 12000) return 7.5f;
+		if (lifeMax <= 28000) return 9.5f;
+		if (lifeMax <= 55000) return 12.2f;
+		if (lifeMax <= 90000) return 14.5f;
+		if (lifeMax <= 160000) return 16.5f;
 		return 18.5f;
 	}
 

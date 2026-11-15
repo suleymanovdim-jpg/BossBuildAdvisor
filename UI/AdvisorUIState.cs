@@ -15,14 +15,20 @@ namespace BossBuildAdvisor.UI;
 
 public sealed class AdvisorUIState : UIState
 {
-	private readonly BossCatalog _catalog;
-	private readonly ProgressionGraph _graph;
-	private readonly BuildRecommender _recommender;
+	private BossCatalog _catalog;
+	private ProgressionGraph _graph;
+	private BuildRecommender _recommender;
 
 	private UIPanel _rootPanel;
 	private UIElement _headerBar;
+	private UIText _titleText;
+	private UIText _subtitleText;
 	private bool _dragging;
 	private Vector2 _dragOffset;
+
+	private UIPanel _leftCol;
+	private UIElement _rightCol;
+	private UIPanel _bannerPanel;
 
 	private BossSearchBox _searchBox;
 	private UIList _bossList;
@@ -31,6 +37,8 @@ public sealed class AdvisorUIState : UIState
 	private UIElement _classTabsBar;
 	private readonly List<(DamageClass Dc, AdvisorButton Btn)> _classButtons = new();
 
+	private AdvisorButton _closeBtn;
+	private AdvisorButton _nextBtn;
 	private AdvisorButton _includeDropsBtn;
 	private AdvisorButton _difficultyBtn;
 	private AdvisorButton _includeEstBtn;
@@ -48,6 +56,7 @@ public sealed class AdvisorUIState : UIState
 	private UIText _weaponsHeader;
 	private UIText _armorBonusText;
 	private UIText _accessoriesHeader;
+	private readonly AdvisorButton[] _armorOptionButtons = new AdvisorButton[3];
 
 	private readonly List<AdvisorItemSlot> _allSlots = new();
 
@@ -61,6 +70,14 @@ public sealed class AdvisorUIState : UIState
 	private int _selectedArmorOptionIndex;
 	private RecommendedSlotItem _inspectedItem;
 
+	private float _panelW = 1040f;
+	private float _panelH = 646f;
+	private float _rightColW = 736f;
+	private float _topRowH = 160f;
+	private float _midRowH = 152f;
+	private float _lastViewportW = -1f;
+	private float _lastViewportH = -1f;
+
 	public AdvisorUIState(BossCatalog catalog, ProgressionGraph graph, BuildRecommender recommender)
 	{
 		_catalog = catalog;
@@ -68,131 +85,133 @@ public sealed class AdvisorUIState : UIState
 		_recommender = recommender;
 	}
 
+	public void UpdateDependencies(BossCatalog catalog, ProgressionGraph graph, BuildRecommender recommender)
+	{
+		_catalog = catalog;
+		_graph = graph;
+		_recommender = recommender;
+	}
+
+	public bool ContainsMouse => _rootPanel != null && _rootPanel.ContainsPoint(Main.MouseScreen);
+
 	public override void OnInitialize()
 	{
-		const float panelW = 1040f;
-		const float panelH = 636f;
+		ComputeResponsiveMetrics(out _panelW, out _panelH, out float leftW);
 
 		_rootPanel = new UIPanel
 		{
-			Width = StyleDimension.FromPixels(panelW),
-			Height = StyleDimension.FromPixels(panelH),
-			Left = StyleDimension.FromPixels(Math.Max(12f, (Main.screenWidth - panelW) * 0.5f)),
-			Top = StyleDimension.FromPixels(Math.Max(12f, (Main.screenHeight - panelH) * 0.5f)),
+			Width = StyleDimension.FromPixels(_panelW),
+			Height = StyleDimension.FromPixels(_panelH),
+			Left = StyleDimension.FromPixels(Math.Max(8f, (Main.screenWidth - _panelW) * 0.5f)),
+			Top = StyleDimension.FromPixels(Math.Max(8f, (Main.screenHeight - _panelH) * 0.5f)),
 			BackgroundColor = new Color(25, 33, 58, 240),
-			BorderColor = new Color(12, 16, 30, 245)
+			BorderColor = new Color(12, 16, 30, 245),
+			OverflowHidden = true
 		};
 		_rootPanel.SetPadding(10f);
 		Append(_rootPanel);
 
-		BuildHeader(panelW);
-		BuildLeftBossColumn();
-		BuildRightRecommendationColumn();
+		BuildHeader();
+		BuildLeftBossColumn(leftW);
+		BuildRightRecommendationColumn(leftW);
+		ApplyResponsiveLayout(force: true);
 	}
 
-	private void BuildHeader(float panelW)
+	private static void ComputeResponsiveMetrics(out float panelW, out float panelH, out float leftW)
+	{
+		panelW = Math.Clamp(Main.screenWidth - 20f, 680f, 1040f);
+		panelH = Math.Clamp(Main.screenHeight - 20f, 480f, 646f);
+		leftW = Math.Clamp(panelW * 0.265f, 210f, 276f);
+	}
+
+	private void BuildHeader()
 	{
 		_headerBar = new UIElement
 		{
 			Width = StyleDimension.FromPercent(1f),
-			Height = StyleDimension.FromPixels(44f)
+			Height = StyleDimension.FromPixels(44f),
+			OverflowHidden = true
 		};
 		_headerBar.OnLeftMouseDown += StartDrag;
 		_headerBar.OnLeftMouseUp += EndDrag;
 		_rootPanel.Append(_headerBar);
 
-		var title = new UIText(Loc("UI.Title"), 1.05f)
+		_titleText = new UIText(Loc("UI.Title"), 1.02f)
 		{
 			Left = StyleDimension.FromPixels(4f),
 			Top = StyleDimension.FromPixels(2f),
 			TextColor = new Color(255, 222, 110)
 		};
-		_headerBar.Append(title);
+		_headerBar.Append(_titleText);
 
-		var subtitle = new UIText(Loc("UI.Subtitle"), 0.72f)
+		_subtitleText = new UIText(Loc("UI.Subtitle"), 0.70f)
 		{
 			Left = StyleDimension.FromPixels(6f),
 			Top = StyleDimension.FromPixels(24f),
 			TextColor = new Color(175, 195, 230)
 		};
-		_headerBar.Append(subtitle);
+		_headerBar.Append(_subtitleText);
 
-		float rx = 0f;
-		var closeBtn = new AdvisorButton("X", () => Systems.AdvisorSystem.Instance.SetOpen(false), 0.85f, new Color(120, 42, 46, 235), new Color(160, 58, 62, 245))
+		_closeBtn = new AdvisorButton("X", () => Systems.AdvisorSystem.Instance.SetOpen(false), 0.85f, new Color(120, 42, 46, 235), new Color(160, 58, 62, 245))
 		{
 			Width = StyleDimension.FromPixels(32f),
 			Height = StyleDimension.FromPixels(30f),
-			Left = StyleDimension.FromPixelsAndPercent(-32f, 1f),
 			Top = StyleDimension.FromPixels(4f)
 		};
-		_headerBar.Append(closeBtn);
-		rx += 38f;
+		_headerBar.Append(_closeBtn);
 
 		_includeMiniBtn = new AdvisorButton(Loc("UI.IncludeMinibossesOn"), ToggleMinibosses, 0.68f)
 		{
-			Width = StyleDimension.FromPixels(134f),
 			Height = StyleDimension.FromPixels(30f),
-			Left = StyleDimension.FromPixelsAndPercent(-(rx + 134f), 1f),
 			Top = StyleDimension.FromPixels(4f)
 		};
 		_includeMiniBtn.SetActive(_includeMinibossesAndEvents);
 		_headerBar.Append(_includeMiniBtn);
-		rx += 140f;
 
 		_difficultyBtn = new AdvisorButton(GetDifficultyButtonLabel(_options.MaxDifficulty), CycleDifficultyFilter, 0.68f)
 		{
-			Width = StyleDimension.FromPixels(140f),
 			Height = StyleDimension.FromPixels(30f),
-			Left = StyleDimension.FromPixelsAndPercent(-(rx + 140f), 1f),
 			Top = StyleDimension.FromPixels(4f)
 		};
 		_difficultyBtn.SetActive(_options.MaxDifficulty != DifficultyFilterMode.Comfortable);
 		_headerBar.Append(_difficultyBtn);
-		rx += 146f;
 
 		_includeEstBtn = new AdvisorButton(Loc("UI.IncludeEstimatedOn"), ToggleEstimated, 0.68f)
 		{
-			Width = StyleDimension.FromPixels(114f),
 			Height = StyleDimension.FromPixels(30f),
-			Left = StyleDimension.FromPixelsAndPercent(-(rx + 114f), 1f),
 			Top = StyleDimension.FromPixels(4f)
 		};
 		_includeEstBtn.SetActive(_options.IncludeTierEstimatedItems);
 		_headerBar.Append(_includeEstBtn);
-		rx += 120f;
 
 		_includeDropsBtn = new AdvisorButton(Loc("UI.IncludeBossDropsOff"), ToggleBossDrops, 0.68f)
 		{
-			Width = StyleDimension.FromPixels(122f),
 			Height = StyleDimension.FromPixels(30f),
-			Left = StyleDimension.FromPixelsAndPercent(-(rx + 122f), 1f),
 			Top = StyleDimension.FromPixels(4f)
 		};
 		_headerBar.Append(_includeDropsBtn);
-		rx += 128f;
 
-		var nextBtn = new AdvisorButton(Loc("UI.JumpToNextBoss"), JumpToNextBoss, 0.70f, new Color(56, 88, 66, 230), new Color(75, 120, 88, 240))
+		_nextBtn = new AdvisorButton(Loc("UI.JumpToNextBoss"), JumpToNextBoss, 0.70f, new Color(56, 88, 66, 230), new Color(75, 120, 88, 240))
 		{
-			Width = StyleDimension.FromPixels(96f),
 			Height = StyleDimension.FromPixels(30f),
-			Left = StyleDimension.FromPixelsAndPercent(-(rx + 96f), 1f),
 			Top = StyleDimension.FromPixels(4f)
 		};
-		_headerBar.Append(nextBtn);
+		_headerBar.Append(_nextBtn);
 	}
 
-	private void BuildLeftBossColumn()
+	private void BuildLeftBossColumn(float leftW)
 	{
-		var leftCol = new UIPanel
+		_leftCol = new UIPanel
 		{
 			Top = StyleDimension.FromPixels(50f),
-			Width = StyleDimension.FromPixels(276f),
+			Width = StyleDimension.FromPixels(leftW),
 			Height = StyleDimension.FromPixelsAndPercent(-54f, 1f),
 			BackgroundColor = new Color(18, 24, 42, 220),
-			BorderColor = new Color(12, 16, 30)
+			BorderColor = new Color(12, 16, 30),
+			OverflowHidden = true
 		};
-		leftCol.SetPadding(6f);
-		_rootPanel.Append(leftCol);
+		_leftCol.SetPadding(6f);
+		_rootPanel.Append(_leftCol);
 
 		_searchBox = new BossSearchBox(Loc("UI.SearchPlaceholder"), txt =>
 		{
@@ -203,7 +222,7 @@ public sealed class AdvisorUIState : UIState
 			Width = StyleDimension.FromPercent(1f),
 			Height = StyleDimension.FromPixels(30f)
 		};
-		leftCol.Append(_searchBox);
+		_leftCol.Append(_searchBox);
 
 		_bossList = new UIList
 		{
@@ -213,7 +232,7 @@ public sealed class AdvisorUIState : UIState
 			ListPadding = 4f,
 			ManualSortMethod = _ => { }
 		};
-		leftCol.Append(_bossList);
+		_leftCol.Append(_bossList);
 
 		var scrollbar = new UIScrollbar
 		{
@@ -222,38 +241,39 @@ public sealed class AdvisorUIState : UIState
 			Height = StyleDimension.FromPixelsAndPercent(-42f, 1f)
 		};
 		scrollbar.SetView(100f, 1000f);
-		leftCol.Append(scrollbar);
+		_leftCol.Append(scrollbar);
 		_bossList.SetScrollbar(scrollbar);
 	}
 
-	private void BuildRightRecommendationColumn()
+	private void BuildRightRecommendationColumn(float leftW)
 	{
-		var rightCol = new UIElement
+		_rightCol = new UIElement
 		{
-			Left = StyleDimension.FromPixels(284f),
+			Left = StyleDimension.FromPixels(leftW + 8f),
 			Top = StyleDimension.FromPixels(50f),
-			Width = StyleDimension.FromPixelsAndPercent(-284f, 1f),
+			Width = StyleDimension.FromPixelsAndPercent(-(leftW + 8f), 1f),
 			Height = StyleDimension.FromPixelsAndPercent(-54f, 1f)
 		};
-		_rootPanel.Append(rightCol);
+		_rootPanel.Append(_rightCol);
 
 		_classTabsBar = new UIElement
 		{
 			Width = StyleDimension.FromPercent(1f),
 			Height = StyleDimension.FromPixels(30f)
 		};
-		rightCol.Append(_classTabsBar);
+		_rightCol.Append(_classTabsBar);
 
-		var banner = new UIPanel
+		_bannerPanel = new UIPanel
 		{
 			Top = StyleDimension.FromPixels(34f),
 			Width = StyleDimension.FromPercent(1f),
 			Height = StyleDimension.FromPixels(42f),
 			BackgroundColor = new Color(32, 42, 72, 225),
-			BorderColor = new Color(16, 22, 40)
+			BorderColor = new Color(16, 22, 40),
+			OverflowHidden = true
 		};
-		banner.SetPadding(6f);
-		rightCol.Append(banner);
+		_bannerPanel.SetPadding(6f);
+		_rightCol.Append(_bannerPanel);
 
 		_bossBannerText = new UIText("...", 0.90f)
 		{
@@ -261,7 +281,7 @@ public sealed class AdvisorUIState : UIState
 			Top = StyleDimension.FromPixels(1f),
 			TextColor = new Color(255, 225, 115)
 		};
-		banner.Append(_bossBannerText);
+		_bannerPanel.Append(_bossBannerText);
 
 		_bossMetaText = new UIText("...", 0.70f)
 		{
@@ -269,18 +289,35 @@ public sealed class AdvisorUIState : UIState
 			Top = StyleDimension.FromPixels(21f),
 			TextColor = new Color(185, 200, 230)
 		};
-		banner.Append(_bossMetaText);
+		_bannerPanel.Append(_bossMetaText);
 
 		// Weapons + Support + Ammo (top-left, 2x7 grid)
-		_weaponsPanel = CreateSectionPanel(0f, 80f, 376f, 152f, string.Format(Loc("UI.SectionWeapons"), 0));
-		rightCol.Append(_weaponsPanel);
+		_weaponsPanel = CreateSectionPanel(0f, 80f, 376f, 160f, string.Format(Loc("UI.SectionWeapons"), 0));
+		_rightCol.Append(_weaponsPanel);
 		_weaponsHeader = _weaponsPanel.Children.OfType<UIText>().FirstOrDefault();
 
-		// Armor Sets (top-right, 3 armor slots + #1/#2/#3 set switcher)
-		_armorPanel = CreateSectionPanel(384f, 80f, -384f, 152f, Loc("UI.SectionArmor"), widthPercent: 1f);
-		rightCol.Append(_armorPanel);
+		// Armor Sets (top-right, 3 armor slots + persistent #1/#2/#3 set switcher)
+		_armorPanel = CreateSectionPanel(384f, 80f, -384f, 160f, Loc("UI.SectionArmor"), widthPercent: 1f);
+		_rightCol.Append(_armorPanel);
 
-		_armorBonusText = new UIText("", 0.66f)
+		for (int i = 0; i < 3; i++)
+		{
+			int optionIdx = i;
+			var tabBtn = new AdvisorButton(string.Format(Loc("UI.ArmorOptionTab"), i + 1), () =>
+			{
+				_selectedArmorOptionIndex = optionIdx;
+				RenderArmorSection(reselectSlot: true);
+				RenderInspectedItemDetails();
+			}, 0.68f)
+			{
+				Width = StyleDimension.FromPixels(34f),
+				Height = StyleDimension.FromPixels(20f),
+				Top = StyleDimension.FromPixels(-1f)
+			};
+			_armorOptionButtons[i] = tabBtn;
+		}
+
+		_armorBonusText = new UIText("", 0.65f)
 		{
 			Left = StyleDimension.FromPixels(4f),
 			Top = StyleDimension.FromPixels(78f),
@@ -291,17 +328,17 @@ public sealed class AdvisorUIState : UIState
 		_armorPanel.Append(_armorBonusText);
 
 		// Accessories (mid-left, 2x7 = 14 slots: core + alternatives)
-		_accessoriesPanel = CreateSectionPanel(0f, 238f, 424f, 148f, Loc("UI.SectionAccessories"));
-		rightCol.Append(_accessoriesPanel);
+		_accessoriesPanel = CreateSectionPanel(0f, 246f, 424f, 152f, Loc("UI.SectionAccessories"));
+		_rightCol.Append(_accessoriesPanel);
 		_accessoriesHeader = _accessoriesPanel.Children.OfType<UIText>().FirstOrDefault();
 
 		// Potions & Buffs (mid-right, 2x5 slots)
-		_potionsPanel = CreateSectionPanel(432f, 238f, -432f, 148f, Loc("UI.SectionPotions"), widthPercent: 1f);
-		rightCol.Append(_potionsPanel);
+		_potionsPanel = CreateSectionPanel(432f, 246f, -432f, 152f, Loc("UI.SectionPotions"), widthPercent: 1f);
+		_rightCol.Append(_potionsPanel);
 
 		// Selected Item Details (bottom)
-		_detailsPanel = CreateSectionPanel(0f, 392f, 0f, -392f, Loc("UI.SectionDetails"), widthPercent: 1f, heightPercent: 1f);
-		rightCol.Append(_detailsPanel);
+		_detailsPanel = CreateSectionPanel(0f, 404f, 0f, -404f, Loc("UI.SectionDetails"), widthPercent: 1f, heightPercent: 1f);
+		_rightCol.Append(_detailsPanel);
 	}
 
 	private static UIPanel CreateSectionPanel(float left, float top, float widthPx, float heightPx, string header, float widthPercent = 0f, float heightPercent = 0f)
@@ -313,7 +350,8 @@ public sealed class AdvisorUIState : UIState
 			Width = StyleDimension.FromPixelsAndPercent(widthPx, widthPercent),
 			Height = StyleDimension.FromPixelsAndPercent(heightPx, heightPercent),
 			BackgroundColor = new Color(20, 28, 48, 225),
-			BorderColor = new Color(14, 18, 34)
+			BorderColor = new Color(14, 18, 34),
+			OverflowHidden = true
 		};
 		panel.SetPadding(7f);
 
@@ -339,15 +377,94 @@ public sealed class AdvisorUIState : UIState
 		RebuildRecommendation();
 	}
 
+	private void ApplyResponsiveLayout(bool force = false)
+	{
+		if (_rootPanel == null)
+			return;
+
+		if (!force && Math.Abs(_lastViewportW - Main.screenWidth) < 1f && Math.Abs(_lastViewportH - Main.screenHeight) < 1f)
+			return;
+
+		_lastViewportW = Main.screenWidth;
+		_lastViewportH = Main.screenHeight;
+
+		ComputeResponsiveMetrics(out _panelW, out _panelH, out float leftW);
+		_rootPanel.Width.Set(_panelW, 0f);
+		_rootPanel.Height.Set(_panelH, 0f);
+
+		// Header button layout (right-aligned, proportionally scaled if viewport is narrow)
+		float innerHeaderW = _panelW - 20f;
+		float scaleFactor = Math.Clamp((innerHeaderW - 230f) / 736f, 0.72f, 1f);
+		float closeW = 32f;
+		float miniW = (float)Math.Floor(148f * scaleFactor);
+		float diffW = (float)Math.Floor(148f * scaleFactor);
+		float estW = (float)Math.Floor(120f * scaleFactor);
+		float dropW = (float)Math.Floor(142f * scaleFactor);
+		float nextW = (float)Math.Floor(102f * scaleFactor);
+		float gap = 5f;
+
+		float rx = 0f;
+		void PlaceRight(AdvisorButton btn, float w)
+		{
+			btn.Width.Set(w, 0f);
+			btn.Left.Set(-(rx + w), 1f);
+			rx += w + gap;
+		}
+		PlaceRight(_closeBtn, closeW);
+		PlaceRight(_includeMiniBtn, miniW);
+		PlaceRight(_difficultyBtn, diffW);
+		PlaceRight(_includeEstBtn, estW);
+		PlaceRight(_includeDropsBtn, dropW);
+		PlaceRight(_nextBtn, nextW);
+
+		_leftCol.Width.Set(leftW, 0f);
+		float rightX = leftW + 8f;
+		_rightCol.Left.Set(rightX, 0f);
+		_rightCol.Width.Set(-rightX, 1f);
+		_rightColW = Math.Max(360f, _panelW - 20f - rightX);
+
+		float availRightH = _panelH - 20f - 50f - 80f;
+		_topRowH = Math.Clamp((float)Math.Floor(availRightH * 0.32f), 128f, 160f);
+		_midRowH = Math.Clamp((float)Math.Floor(availRightH * 0.30f), 124f, 152f);
+		float midRowY = 80f + _topRowH + 6f;
+		float detRowY = midRowY + _midRowH + 6f;
+
+		float wpnW = (float)Math.Floor((_rightColW - 8f) * 0.515f);
+		float accW = (float)Math.Floor((_rightColW - 8f) * 0.58f);
+
+		_weaponsPanel.Top.Set(80f, 0f);
+		_weaponsPanel.Width.Set(wpnW, 0f);
+		_weaponsPanel.Height.Set(_topRowH, 0f);
+
+		_armorPanel.Left.Set(wpnW + 8f, 0f);
+		_armorPanel.Top.Set(80f, 0f);
+		_armorPanel.Width.Set(-(wpnW + 8f), 1f);
+		_armorPanel.Height.Set(_topRowH, 0f);
+
+		_accessoriesPanel.Top.Set(midRowY, 0f);
+		_accessoriesPanel.Width.Set(accW, 0f);
+		_accessoriesPanel.Height.Set(_midRowH, 0f);
+
+		_potionsPanel.Left.Set(accW + 8f, 0f);
+		_potionsPanel.Top.Set(midRowY, 0f);
+		_potionsPanel.Width.Set(-(accW + 8f), 1f);
+		_potionsPanel.Height.Set(_midRowH, 0f);
+
+		_detailsPanel.Top.Set(detRowY, 0f);
+		_detailsPanel.Height.Set(-detRowY, 1f);
+
+		_rootPanel.Recalculate();
+	}
+
 	private void ClampPanelToViewport()
 	{
 		if (_rootPanel == null)
 			return;
 
-		float w = _rootPanel.Width.Pixels;
-		float h = _rootPanel.Height.Pixels;
-		float maxLeft = Math.Max(8f, Main.screenWidth - w - 8f);
-		float maxTop = Math.Max(8f, Main.screenHeight - h - 8f);
+		ApplyResponsiveLayout();
+
+		float maxLeft = Math.Max(8f, Main.screenWidth - _panelW - 8f);
+		float maxTop = Math.Max(8f, Main.screenHeight - _panelH - 8f);
 		_rootPanel.Left.Set(Math.Clamp(_rootPanel.Left.Pixels, 8f, maxLeft), 0f);
 		_rootPanel.Top.Set(Math.Clamp(_rootPanel.Top.Pixels, 8f, maxTop), 0f);
 		_rootPanel.Recalculate();
@@ -361,15 +478,33 @@ public sealed class AdvisorUIState : UIState
 		var classes = new List<DamageClass> { null };
 		classes.AddRange(_recommender.GetAvailablePlayableClasses());
 
-		float x = 0f;
-		float maxW = 736f;
 		int count = classes.Count;
-		float btnW = Math.Clamp((maxW - (count - 1) * 4f) / Math.Max(1, count), 70f, 128f);
+		float gap = 4f;
+		float maxW = _rightColW;
+		float totalUsable = Math.Max(120f, maxW - (count - 1) * gap);
 
-		foreach (DamageClass dc in classes)
+		var labels = new List<string>(count);
+		var weights = new float[count];
+		float weightSum = 0f;
+		for (int i = 0; i < count; i++)
 		{
+			DamageClass dc = classes[i];
 			string label = dc == null ? Loc("UI.AllClasses") : ShortenClassName(ItemTooltipAnalyzer.FormatClassDisplayName(dc));
-			var btn = new AdvisorButton(label, () =>
+			labels.Add(label);
+			float wt = Math.Clamp(label.Length + 3f, 7f, 18f);
+			weights[i] = wt;
+			weightSum += wt;
+		}
+
+		float x = 0f;
+		for (int i = 0; i < count; i++)
+		{
+			DamageClass dc = classes[i];
+			float btnW = i == count - 1
+				? Math.Max(52f, maxW - x)
+				: Math.Clamp((float)Math.Floor(totalUsable * (weights[i] / Math.Max(1f, weightSum))), 52f, 150f);
+
+			var btn = new AdvisorButton(labels[i], () =>
 			{
 				_selectedClass = dc;
 				UpdateClassButtonStates();
@@ -383,7 +518,7 @@ public sealed class AdvisorUIState : UIState
 			btn.SetActive(dc == _selectedClass);
 			_classTabsBar.Append(btn);
 			_classButtons.Add((dc, btn));
-			x += btnW + 4f;
+			x += btnW + gap;
 		}
 	}
 
@@ -453,8 +588,9 @@ public sealed class AdvisorUIState : UIState
 			? $"{Loc("UI.AllClasses")} -> {ItemTooltipAnalyzer.FormatClassDisplayName(_currentRec.TargetClass)}"
 			: ItemTooltipAnalyzer.FormatClassDisplayName(_currentRec.TargetClass);
 
+		string stagePrefix = string.Format(Loc("UI.StagePrefix"), _selectedStage.Progression);
 		_bossBannerText.SetText($"{_selectedStage.DisplayName}  [{_selectedStage.ModSource}]");
-		_bossMetaText.SetText($"Stage {_selectedStage.Progression:0.#}  |  {statusText}  |  {classDisplay}  |  {GetDifficultyButtonLabel(_options.MaxDifficulty)}");
+		_bossMetaText.SetText($"{stagePrefix}  |  {statusText}  |  {classDisplay}  |  {GetDifficultyButtonLabel(_options.MaxDifficulty)}");
 
 		_allSlots.Clear();
 		ClearSlotsExceptHeader(_weaponsPanel);
@@ -470,8 +606,10 @@ public sealed class AdvisorUIState : UIState
 		weaponSlots.AddRange(_currentRec.SupportWeapons.Take(supTake));
 		weaponSlots.AddRange(_currentRec.AmmoOptions.Take(Math.Min(_currentRec.AmmoOptions.Count, 14 - weaponSlots.Count)));
 
+		float wpnInnerW = Math.Max(200f, _weaponsPanel.GetInnerDimensions().Width);
+		float wpnSize = CalcSlotSize(wpnInnerW, 7, 5f, 44f);
 		_weaponsHeader?.SetText(string.Format(Loc("UI.SectionWeapons"), weaponSlots.Count));
-		PlaceSlotGrid(_weaponsPanel, weaponSlots, startX: 4f, startY: 22f, slotSize: 44f, gap: 5f, cols: 7, shortTagFn: ShortRole);
+		PlaceSlotGrid(_weaponsPanel, weaponSlots, startX: 4f, startY: 22f, slotSize: wpnSize, gap: 5f, cols: 7, shortTagFn: ShortRole);
 
 		// Armor Sets (#1 / #2 / #3)
 		RenderArmorSection(reselectSlot: false);
@@ -480,17 +618,31 @@ public sealed class AdvisorUIState : UIState
 		var allAccessories = new List<RecommendedSlotItem>();
 		allAccessories.AddRange(_currentRec.Accessories);
 		allAccessories.AddRange(_currentRec.AltAccessories);
+		float accInnerW = Math.Max(200f, _accessoriesPanel.GetInnerDimensions().Width);
+		float accSize = CalcSlotSize(accInnerW, 7, 6f, 48f);
 		_accessoriesHeader?.SetText(string.Format(Loc("UI.SectionAccessories"), _currentRec.Accessories.Count, _currentRec.AltAccessories.Count));
-		PlaceSlotGrid(_accessoriesPanel, allAccessories, startX: 4f, startY: 24f, slotSize: 48f, gap: 6f, cols: 7, shortTagFn: ShortRole,
+		PlaceSlotGrid(_accessoriesPanel, allAccessories, startX: 4f, startY: 24f, slotSize: accSize, gap: 6f, cols: 7, shortTagFn: ShortRole,
 			isAlternativeFn: idx => idx >= _currentRec.Accessories.Count);
 
 		// Potions & Buffs (1 HP + 8 buffs = up to 9 in 2x5 grid)
 		var potionSlots = new List<RecommendedSlotItem>();
 		if (_currentRec.HealingPotion != null) potionSlots.Add(_currentRec.HealingPotion);
 		potionSlots.AddRange(_currentRec.BuffPotions.Take(8));
-		PlaceSlotGrid(_potionsPanel, potionSlots, startX: 4f, startY: 24f, slotSize: 44f, gap: 5f, cols: 5, shortTagFn: s => s.RoleTag == "Healing" ? "HP" : "");
+		float potInnerW = Math.Max(160f, _potionsPanel.GetInnerDimensions().Width);
+		float potSize = CalcSlotSize(potInnerW, 5, 5f, 44f);
+		string hpTag = Loc("UI.SlotTagHP");
+		PlaceSlotGrid(_potionsPanel, potionSlots, startX: 4f, startY: 24f, slotSize: potSize, gap: 5f, cols: 5, shortTagFn: s => s.RoleTag == "Healing" ? hpTag : "");
 
 		RenderInspectedItemDetails();
+	}
+
+	private static float CalcSlotSize(float innerW, int cols, float gap, float maxSize)
+	{
+		if (innerW <= 0f)
+			return maxSize;
+
+		float usable = Math.Max(80f, innerW - 8f - (cols - 1) * gap);
+		return Math.Clamp((float)Math.Floor(usable / cols), 30f, maxSize);
 	}
 
 	private void RenderArmorSection(bool reselectSlot)
@@ -499,29 +651,28 @@ public sealed class AdvisorUIState : UIState
 			return;
 
 		_allSlots.RemoveAll(s => s.Parent == _armorPanel);
-		ClearSlotsExceptHeader(_armorPanel, keepText: _armorBonusText);
+		ClearSlotsExceptHeader(_armorPanel, keepText: _armorBonusText, keepPersistent: true);
 
 		int optCount = _currentRec.ArmorOptions.Count;
 		int idx = optCount > 0 ? Math.Clamp(_selectedArmorOptionIndex, 0, optCount - 1) : 0;
 		_selectedArmorOptionIndex = idx;
 
-		for (int i = 0; i < optCount; i++)
+		for (int i = 0; i < 3; i++)
 		{
-			int optionIdx = i;
-			var tabBtn = new AdvisorButton(string.Format(Loc("UI.ArmorOptionTab"), i + 1), () =>
+			AdvisorButton tabBtn = _armorOptionButtons[i];
+			if (i < optCount)
 			{
-				_selectedArmorOptionIndex = optionIdx;
-				RenderArmorSection(reselectSlot: true);
-				RenderInspectedItemDetails();
-			}, 0.68f)
+				tabBtn.Left.Set(-(optCount - i) * 38f, 1f);
+				tabBtn.Top.Set(-1f, 0f);
+				tabBtn.SetActive(i == idx);
+				if (tabBtn.Parent == null)
+					_armorPanel.Append(tabBtn);
+				tabBtn.Recalculate();
+			}
+			else if (tabBtn.Parent != null)
 			{
-				Width = StyleDimension.FromPixels(34f),
-				Height = StyleDimension.FromPixels(20f),
-				Left = StyleDimension.FromPixelsAndPercent(-(optCount - i) * 38f, 1f),
-				Top = StyleDimension.FromPixels(-1f)
-			};
-			tabBtn.SetActive(i == idx);
-			_armorPanel.Append(tabBtn);
+				_armorPanel.RemoveChild(tabBtn);
+			}
 		}
 
 		ArmorSetCandidate activeSet = optCount > 0 ? _currentRec.ArmorOptions[idx] : _currentRec.ArmorSet;
@@ -533,15 +684,17 @@ public sealed class AdvisorUIState : UIState
 		if (body != null) armorSlots.Add(body);
 		if (legs != null) armorSlots.Add(legs);
 
-		PlaceSlotGrid(_armorPanel, armorSlots, startX: 4f, startY: 24f, slotSize: 48f, gap: 8f, cols: 3, shortTagFn: s => s.RoleTag[..1]);
+		float armorSlotSize = _topRowH >= 150f ? 48f : 42f;
+		PlaceSlotGrid(_armorPanel, armorSlots, startX: 4f, startY: 24f, slotSize: armorSlotSize, gap: 8f, cols: 3, shortTagFn: ArmorShortTag);
 
+		_armorBonusText.Top.Set(24f + armorSlotSize + 5f, 0f);
 		if (activeSet != null)
 		{
 			string defLine = string.Format(Loc("UI.TotalDefense"), activeSet.TotalDefense);
 			string diffName = GetDifficultyLabel(activeSet.Difficulty);
 			string bonusLine = activeSet.IsTrueSet
 				? (string.IsNullOrWhiteSpace(activeSet.SetBonusSummary)
-					? $"Set [{activeSet.ModName}]"
+					? string.Format(Loc("UI.ArmorSetFromMod"), activeSet.ModName)
 					: activeSet.SetBonusSummary)
 				: Loc("UI.NoArmorSetBonus");
 			_armorBonusText.SetText($"{defLine} | {diffName} | {bonusLine}");
@@ -604,6 +757,8 @@ public sealed class AdvisorUIState : UIState
 			{
 				Left = StyleDimension.FromPixels(4f),
 				Top = StyleDimension.FromPixels(26f),
+				Width = StyleDimension.FromPixelsAndPercent(-10f, 1f),
+				IsWrapped = true,
 				TextColor = new Color(185, 200, 225)
 			});
 			return;
@@ -630,57 +785,56 @@ public sealed class AdvisorUIState : UIState
 			_ => new Color(255, 200, 115)
 		};
 
-		_detailsPanel.Append(new UIText($"{item.Name}  ({string.Format(Loc("UI.ModOrigin"), modName)})", 0.88f)
-		{
-			Left = StyleDimension.FromPixels(66f),
-			Top = StyleDimension.FromPixels(22f),
-			TextColor = new Color(255, 228, 120)
-		});
+		float panelInnerW = _detailsPanel.GetInnerDimensions().Width;
+		if (panelInnerW <= 60f)
+			panelInnerW = Math.Max(260f, _rightColW - 14f);
+		float textWrapW = Math.Max(180f, panelInnerW - 76f);
 
-		_detailsPanel.Append(new UIText(string.Format(Loc("UI.UnlockStage"), _inspectedItem.UnlockProgression, confText), 0.70f)
-		{
-			Left = StyleDimension.FromPixels(66f),
-			Top = StyleDimension.FromPixels(42f),
-			TextColor = confColor
-		});
+		float y = 22f;
+		y += AppendDetailLine($"{item.Name}  ({string.Format(Loc("UI.ModOrigin"), modName)})", y, 0.86f, new Color(255, 228, 120), textWrapW);
+
+		string roleDisp = FormatDetailRole(_inspectedItem.RoleTag, _currentRec?.TargetClass);
+		string stageText = string.Format(Loc("UI.UnlockStage"), _inspectedItem.UnlockProgression, confText);
+		string unlockLine = string.IsNullOrEmpty(roleDisp) ? stageText : $"{roleDisp}  |  {stageText}";
+		y += AppendDetailLine(unlockLine, y, 0.69f, confColor, textWrapW);
 
 		string diffLabel = GetDifficultyLabel(_inspectedItem.Difficulty);
 		string diffReason = string.IsNullOrWhiteSpace(_inspectedItem.DifficultyReason) ? confText : _inspectedItem.DifficultyReason;
 		Color diffColor = GetDifficultyColor(_inspectedItem.Difficulty);
+		y += AppendDetailLine(string.Format(Loc("UI.DifficultyLine"), diffLabel, diffReason), y, 0.69f, diffColor, textWrapW);
 
-		_detailsPanel.Append(new UIText(string.Format(Loc("UI.DifficultyLine"), diffLabel, diffReason), 0.70f)
-		{
-			Left = StyleDimension.FromPixels(66f),
-			Top = StyleDimension.FromPixels(60f),
-			TextColor = diffColor
-		});
-
-		_detailsPanel.Append(new UIText(string.Format(Loc("UI.SourcePrefix"), _inspectedItem.SourceSummary ?? "-"), 0.72f)
-		{
-			Left = StyleDimension.FromPixels(66f),
-			Top = StyleDimension.FromPixels(80f),
-			Width = StyleDimension.FromPixelsAndPercent(-74f, 1f),
-			IsWrapped = true,
-			TextColor = Color.White
-		});
-
-		_detailsPanel.Append(new UIText(string.Format(Loc("UI.ReasonsPrefix"), _inspectedItem.ReasonSummary ?? "-"), 0.68f)
-		{
-			Left = StyleDimension.FromPixels(66f),
-			Top = StyleDimension.FromPixels(106f),
-			Width = StyleDimension.FromPixelsAndPercent(-74f, 1f),
-			IsWrapped = true,
-			TextColor = new Color(185, 205, 230)
-		});
+		y += AppendDetailLine(string.Format(Loc("UI.SourcePrefix"), _inspectedItem.SourceSummary ?? "-"), y, 0.70f, Color.White, textWrapW);
+		AppendDetailLine(string.Format(Loc("UI.ReasonsPrefix"), _inspectedItem.ReasonSummary ?? "-"), y, 0.67f, new Color(185, 205, 230), textWrapW);
 	}
 
-	private static void ClearSlotsExceptHeader(UIPanel panel, UIElement keepText = null)
+	private float AppendDetailLine(string text, float topY, float scale, Color color, float textWrapW)
+	{
+		var txt = new UIText(text, scale)
+		{
+			Left = StyleDimension.FromPixels(66f),
+			Top = StyleDimension.FromPixels(topY),
+			Width = StyleDimension.FromPixelsAndPercent(-74f, 1f),
+			IsWrapped = true,
+			TextColor = color
+		};
+		_detailsPanel.Append(txt);
+
+		if (Terraria.GameContent.FontAssets.MouseText?.IsLoaded != true)
+			return 22f * scale + 3f;
+
+		int maxCharsPx = (int)Math.Max(120f, textWrapW / scale);
+		Utils.WordwrapString(text, Terraria.GameContent.FontAssets.MouseText.Value, maxCharsPx, 12, out int lineAmount);
+		int lines = Math.Max(1, lineAmount + 1);
+		return lines * (22f * scale) + 2f;
+	}
+
+	private static void ClearSlotsExceptHeader(UIPanel panel, UIElement keepText = null, bool keepPersistent = false)
 	{
 		var toRemove = new List<UIElement>();
 		bool firstTextKept = false;
 		foreach (UIElement child in panel.Children)
 		{
-			if (child == keepText)
+			if (child == keepText || (keepPersistent && child is AdvisorButton))
 				continue;
 
 			if (!firstTextKept && child is UIText)
@@ -766,24 +920,53 @@ public sealed class AdvisorUIState : UIState
 	{
 		base.Update(gameTime);
 
-		if (_rootPanel.IsMouseHovering)
+		ClampPanelToViewport();
+
+		if (ContainsMouse)
+		{
 			Main.LocalPlayer.mouseInterface = true;
+			Main.blockMouse = true;
+			Terraria.GameInput.PlayerInput.LockVanillaMouseScroll("BossBuildAdvisor/UI");
+		}
 
 		if (_dragging)
 		{
+			if (!Main.mouseLeft || !Main.hasFocus)
+			{
+				_dragging = false;
+				return;
+			}
+
 			Vector2 newPos = Main.MouseScreen - _dragOffset;
-			float maxX = Math.Max(0f, Main.screenWidth - _rootPanel.Width.Pixels);
-			float maxY = Math.Max(0f, Main.screenHeight - _rootPanel.Height.Pixels);
-			_rootPanel.Left.Set(Math.Clamp(newPos.X, 0f, maxX), 0f);
-			_rootPanel.Top.Set(Math.Clamp(newPos.Y, 0f, maxY), 0f);
+			float maxX = Math.Max(8f, Main.screenWidth - _panelW - 8f);
+			float maxY = Math.Max(8f, Main.screenHeight - _panelH - 8f);
+			_rootPanel.Left.Set(Math.Clamp(newPos.X, 8f, maxX), 0f);
+			_rootPanel.Top.Set(Math.Clamp(newPos.Y, 8f, maxY), 0f);
 			_rootPanel.Recalculate();
 		}
 	}
 
+	public override void Draw(SpriteBatch spriteBatch)
+	{
+		if (ContainsMouse)
+		{
+			Main.LocalPlayer.mouseInterface = true;
+			Main.blockMouse = true;
+			if (!Main.HoverItem.IsAir)
+				Main.HoverItem.TurnToAir();
+			Main.hoverItemName = string.Empty;
+		}
+
+		base.Draw(spriteBatch);
+	}
+
 	private void StartDrag(UIMouseEvent evt, UIElement listeningElement)
 	{
-		// Only drag if clicking directly on the header area (not child buttons)
-		if (evt.Target != _headerBar && evt.Target is not UIText)
+		if (evt.Target is AdvisorButton)
+			return;
+
+		// Drag only when pressing the header bar background or title/subtitle directly
+		if (evt.Target != _headerBar && evt.Target?.Parent != _headerBar)
 			return;
 
 		_dragging = true;
@@ -829,28 +1012,55 @@ public sealed class AdvisorUIState : UIState
 			return "Class";
 
 		string s = raw.Trim();
-		s = s.Replace(" damage", "", StringComparison.OrdinalIgnoreCase)
-			.Replace("урон в ", "", StringComparison.OrdinalIgnoreCase)
-			.Replace("урон ", "", StringComparison.OrdinalIgnoreCase)
-			.Trim();
-		if (s.Length > 13)
-			s = s[..12] + ".";
+		if (s.Length > 20)
+			s = s[..19] + "…";
 		return s;
 	}
+
+	private static string ArmorShortTag(RecommendedSlotItem slot) => slot.RoleTag switch
+	{
+		"Head" => Loc("UI.SlotTagHead"),
+		"Body" => Loc("UI.SlotTagBody"),
+		"Legs" => Loc("UI.SlotTagLegs"),
+		_ => slot.RoleTag[..1]
+	};
 
 	private static string ShortRole(RecommendedSlotItem slot)
 	{
 		return slot.RoleTag switch
 		{
-			"Wings" => "Wing",
-			"Dash / Dodge" => "Dash",
-			"Mobility" => "Boot",
-			"Whip" => "Whip",
-			"Sentry" or "Support Sentry" => "Tur",
-			"Free Minion" => "Pet",
-			"Ammo" => "Ammo",
-			"Defense / Regen" => "Def",
+			"Wings" => Loc("UI.SlotTagWing"),
+			"Dash / Dodge" => Loc("UI.SlotTagDash"),
+			"Mobility" => Loc("UI.SlotTagBoot"),
+			"Whip" => Loc("UI.SlotTagWhip"),
+			"Sentry" or "Support Sentry" => Loc("UI.SlotTagSentry"),
+			"Free Minion" => Loc("UI.SlotTagPet"),
+			"Ammo" => Loc("UI.SlotTagAmmo"),
+			"Defense / Regen" => Loc("UI.SlotTagDef"),
 			_ => ""
 		};
 	}
+
+	private static string FormatDetailRole(string roleTag, DamageClass targetClass) => roleTag switch
+	{
+		"ClassBoost" => string.Format(Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleClassBoost"), ItemTooltipAnalyzer.FormatClassDisplayName(targetClass)),
+		"Whip" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleWhip"),
+		"Sentry" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleSentry"),
+		"Minion" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleMinion"),
+		"Weapon" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleWeapon"),
+		"Support Sentry" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleSupportSentry"),
+		"Free Minion" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleFreeMinion"),
+		"Ammo" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleAmmo"),
+		"Head" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleHead"),
+		"Body" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleBody"),
+		"Legs" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleLegs"),
+		"Wings" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleWings"),
+		"Dash / Dodge" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleDash"),
+		"Mobility" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleMobility"),
+		"Defense / Regen" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleDefense"),
+		"Combat Utility" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleCombatUtility"),
+		"Healing" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleHealing"),
+		"Buff" => Language.GetTextValue("Mods.BossBuildAdvisor.Recommender.RoleBuff"),
+		_ => roleTag ?? string.Empty
+	};
 }

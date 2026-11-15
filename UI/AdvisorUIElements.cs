@@ -14,7 +14,8 @@ namespace BossBuildAdvisor.UI;
 
 public sealed class AdvisorButton : UIPanel
 {
-	private readonly UIText _label;
+	private string _text;
+	private readonly float _baseScale;
 	private readonly Action _onClick;
 	private readonly Color _baseColor;
 	private readonly Color _activeColor;
@@ -22,22 +23,18 @@ public sealed class AdvisorButton : UIPanel
 
 	public AdvisorButton(string text, Action onClick, float textScale = 0.78f, Color? baseColor = null, Color? activeColor = null)
 	{
+		_text = text ?? string.Empty;
+		_baseScale = textScale;
 		_onClick = onClick;
 		_baseColor = baseColor ?? new Color(43, 55, 92, 220);
 		_activeColor = activeColor ?? new Color(84, 118, 178, 240);
 		BackgroundColor = _baseColor;
 		BorderColor = new Color(20, 26, 46, 230);
+		OverflowHidden = true;
 		SetPadding(4f);
-
-		_label = new UIText(text, textScale)
-		{
-			HAlign = 0.5f,
-			VAlign = 0.5f
-		};
-		Append(_label);
 	}
 
-	public void SetText(string text) => _label.SetText(text);
+	public void SetText(string text) => _text = text ?? string.Empty;
 
 	public void SetActive(bool active)
 	{
@@ -64,6 +61,33 @@ public sealed class AdvisorButton : UIPanel
 		base.LeftClick(evt);
 		SoundEngine.PlaySound(SoundID.MenuTick);
 		_onClick?.Invoke();
+	}
+
+	protected override void DrawSelf(SpriteBatch spriteBatch)
+	{
+		base.DrawSelf(spriteBatch);
+
+		if (string.IsNullOrEmpty(_text))
+			return;
+
+		CalculatedStyle inner = GetInnerDimensions();
+		var font = FontAssets.MouseText.Value;
+		float maxWidth = Math.Max(12f, inner.Width - 4f);
+		string shown = _text;
+		Vector2 size = font.MeasureString(shown);
+		float scale = size.X > 0f ? Math.Clamp(maxWidth / size.X, 0.44f, _baseScale) : _baseScale;
+
+		if (size.X * scale > maxWidth && shown.Length > 4)
+		{
+			while (shown.Length > 3 && font.MeasureString(shown + "…").X * scale > maxWidth)
+				shown = shown[..^1];
+			shown += "…";
+			size = font.MeasureString(shown);
+		}
+
+		float x = inner.X + (inner.Width - size.X * scale) * 0.5f;
+		float y = inner.Y + (inner.Height - size.Y * scale) * 0.5f + 2f;
+		Utils.DrawBorderStringFourWay(spriteBatch, font, shown, x, y, Color.White, Color.Black, Vector2.Zero, scale);
 	}
 }
 
@@ -176,6 +200,7 @@ public sealed class BossStageRow : UIPanel
 
 		Width.Set(0f, 1f);
 		Height.Set(42f, 0f);
+		OverflowHidden = true;
 		SetPadding(5f);
 
 		bool downed = stage.IsDowned;
@@ -184,9 +209,7 @@ public sealed class BossStageRow : UIPanel
 			? new Color(135, 235, 145)
 			: (isNextTarget ? new Color(255, 220, 95) : Color.White);
 
-		string nameText = $"{statusMark} {stage.DisplayName}";
-		if (nameText.Length > 28)
-			nameText = nameText[..27] + "…";
+		string nameText = FitTextToWidth($"{statusMark} {stage.DisplayName}", 210f, 0.78f);
 
 		var title = new UIText(nameText, 0.78f)
 		{
@@ -196,7 +219,10 @@ public sealed class BossStageRow : UIPanel
 		};
 		Append(title);
 
-		string tag = stage.IsBoss ? stage.ModSource : $"{stage.ModSource} • {(stage.IsEvent ? "Event" : "Mini")}";
+		string typeTag = stage.IsEvent
+			? Language.GetTextValue("Mods.BossBuildAdvisor.UI.TagEvent")
+			: Language.GetTextValue("Mods.BossBuildAdvisor.UI.TagMini");
+		string tag = stage.IsBoss ? stage.ModSource : $"{stage.ModSource} • {typeTag}";
 		var sub = new UIText($"{tag} ({stage.Progression:0.#})", 0.64f)
 		{
 			Top = StyleDimension.FromPixels(19f),
@@ -206,6 +232,24 @@ public sealed class BossStageRow : UIPanel
 		Append(sub);
 
 		ApplyBg();
+	}
+
+	private static string FitTextToWidth(string text, float maxPx, float scale)
+	{
+		if (string.IsNullOrEmpty(text))
+			return string.Empty;
+
+		if (FontAssets.MouseText?.IsLoaded != true)
+			return text.Length > 28 ? text[..27] + "…" : text;
+
+		var font = FontAssets.MouseText.Value;
+		if (font.MeasureString(text).X * scale <= maxPx)
+			return text;
+
+		string trimmed = text;
+		while (trimmed.Length > 3 && font.MeasureString(trimmed + "…").X * scale > maxPx)
+			trimmed = trimmed[..^1];
+		return trimmed + "…";
 	}
 
 	public void SetSelected(bool selected)
@@ -245,6 +289,8 @@ public sealed class BossSearchBox : UIPanel
 {
 	private bool _focused;
 	private string _text = string.Empty;
+	private string _lastShown;
+	private bool? _lastPlaceholderColor;
 	private readonly string _placeholder;
 	private readonly Action<string> _onChanged;
 	private readonly UIText _display;
@@ -255,6 +301,7 @@ public sealed class BossSearchBox : UIPanel
 		_onChanged = onChanged;
 		BackgroundColor = new Color(24, 31, 52, 235);
 		BorderColor = new Color(60, 76, 120);
+		OverflowHidden = true;
 		SetPadding(5f);
 
 		_display = new UIText(placeholder, 0.78f)
@@ -263,6 +310,8 @@ public sealed class BossSearchBox : UIPanel
 			Left = StyleDimension.FromPixels(4f),
 			TextColor = new Color(150, 165, 195)
 		};
+		_lastShown = placeholder;
+		_lastPlaceholderColor = true;
 		Append(_display);
 	}
 
@@ -273,10 +322,22 @@ public sealed class BossSearchBox : UIPanel
 		if (_focused)
 		{
 			_focused = false;
+			Terraria.GameInput.PlayerInput.WritingText = false;
 			if (ReferenceEquals(Main.CurrentInputTextTakerOverride, this))
 				Main.CurrentInputTextTakerOverride = null;
 			BorderColor = new Color(60, 76, 120);
 		}
+	}
+
+	public void ClearSearch(bool unfocus = false)
+	{
+		if (!string.IsNullOrEmpty(_text))
+		{
+			_text = string.Empty;
+			_onChanged?.Invoke(string.Empty);
+		}
+		if (unfocus)
+			ClearFocus();
 	}
 
 	public void Focus()
@@ -298,17 +359,33 @@ public sealed class BossSearchBox : UIPanel
 		SoundEngine.PlaySound(SoundID.MenuTick);
 	}
 
+	public override void RightClick(UIMouseEvent evt)
+	{
+		base.RightClick(evt);
+		ClearSearch(unfocus: false);
+		SoundEngine.PlaySound(SoundID.MenuTick);
+	}
+
 	public override void Update(GameTime gameTime)
 	{
 		base.Update(gameTime);
 
-		if (_focused && Main.mouseLeft && !IsMouseHovering)
+		if (_focused && (!Main.hasFocus || (Main.mouseLeft && !IsMouseHovering)))
 			ClearFocus();
 
 		if (_focused)
 		{
-			Terraria.GameInput.PlayerInput.WritingText = true;
-			Main.CurrentInputTextTakerOverride = this;
+			if (Main.keyState.IsKeyDown(Microsoft.Xna.Framework.Input.Keys.Escape))
+			{
+				Main.inputTextEscape = false;
+				ClearFocus();
+				SoundEngine.PlaySound(SoundID.MenuTick);
+			}
+			else
+			{
+				Terraria.GameInput.PlayerInput.WritingText = true;
+				Main.CurrentInputTextTakerOverride = this;
+			}
 		}
 
 		bool blinkingOn = _focused && ((int)(Main.GlobalTimeWrappedHourly * 2.5f) % 2 == 0);
@@ -316,8 +393,18 @@ public sealed class BossSearchBox : UIPanel
 			? (_focused ? (blinkingOn ? "|" : " ") : _placeholder)
 			: (_focused ? _text + (blinkingOn ? "|" : "") : _text);
 
-		_display.SetText(shown);
-		_display.TextColor = string.IsNullOrEmpty(_text) && !_focused ? new Color(150, 165, 195) : Color.White;
+		if (shown != _lastShown)
+		{
+			_lastShown = shown;
+			_display.SetText(shown);
+		}
+
+		bool isPlaceholder = string.IsNullOrEmpty(_text) && !_focused;
+		if (_lastPlaceholderColor != isPlaceholder)
+		{
+			_lastPlaceholderColor = isPlaceholder;
+			_display.TextColor = isPlaceholder ? new Color(150, 165, 195) : Color.White;
+		}
 	}
 
 	protected override void DrawSelf(SpriteBatch spriteBatch)
@@ -340,6 +427,7 @@ public sealed class BossSearchBox : UIPanel
 
 		if (Main.inputTextEnter || Main.inputTextEscape)
 		{
+			Main.inputTextEscape = false;
 			ClearFocus();
 			SoundEngine.PlaySound(SoundID.MenuTick);
 		}

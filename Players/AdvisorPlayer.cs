@@ -1,9 +1,7 @@
-using Microsoft.Xna.Framework.Input;
 using Terraria;
 using Terraria.GameInput;
 using Terraria.ModLoader;
 using BossBuildAdvisor.Systems;
-using BossBuildAdvisor.UI;
 
 namespace BossBuildAdvisor.Players;
 
@@ -14,13 +12,7 @@ public sealed class AdvisorPlayer : ModPlayer
 {
 	public override void ProcessTriggers(TriggersSet triggersSet)
 	{
-		if (Main.dedServ || Main.gameMenu || Player.whoAmI != Main.myPlayer)
-			return;
-
-		if (Main.drawingPlayerChat || Main.editSign || Main.editChest)
-			return;
-
-		if (Main.CurrentInputTextTakerOverride is BossSearchBox)
+		if (Player.whoAmI != Main.myPlayer || AdvisorSystem.IsHotkeyBlocked())
 			return;
 
 		ModKeybind keybind = BossBuildAdvisor.ToggleAdvisorKeybind ?? AdvisorSystem.ToggleAdvisorKeybind;

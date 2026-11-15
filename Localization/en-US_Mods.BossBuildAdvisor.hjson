@@ -39,30 +39,79 @@ UI: {
 	UnlockStage: Available from stage <= {0:0.0} ({1})
 	SourcePrefix: How to get: {0}
 	ReasonsPrefix: Why picked: {0}
-	OpenButtonTooltip: Open Boss Build Advisor
-	SlotsHeader: Slots: {0}+{1}
+	OpenButtonTooltip: "Open Boss Build Advisor [{0}]"
+	SlotsHeader: "Slots: {0}+{1}"
+	ClassAuto: Auto
+	TagEvent: Event
+	TagMini: Mini
+	StagePrefix: "Stage {0:0.#}"
+	ArmorSetFromMod: "Set [{0}]"
+	SlotTagHead: Head
+	SlotTagBody: Body
+	SlotTagLegs: Legs
+	SlotTagWing: Wing
+	SlotTagDash: Dash
+	SlotTagBoot: Boot
+	SlotTagWhip: Whip
+	SlotTagSentry: Tur
+	SlotTagPet: Pet
+	SlotTagAmmo: Ammo
+	SlotTagDef: Def
+	SlotTagHP: HP
+}
+
+Recommender: {
+	RoleClassBoost: "{0} Boost"
+	RoleWhip: Whip
+	RoleSentry: Sentry
+	RoleMinion: Minion
+	RoleWeapon: Weapon
+	RoleSupportSentry: Support Sentry
+	RoleFreeMinion: Free Minion
+	RoleAmmo: Ammo
+	RoleHead: Head
+	RoleBody: Body
+	RoleLegs: Legs
+	RoleWings: Wings
+	RoleDash: Dash / Dodge
+	RoleMobility: Mobility
+	RoleDefense: Defense / Regen
+	RoleCombatUtility: Combat Utility
+	RoleHealing: Healing
+	RoleBuff: Buff
+	ModMixed: Mixed
+	ReasonFreeSentry: "Free 1-slot sentry ({0} dmg)"
+	ReasonFreeMinion: "Free 1-slot minion ({0} dmg)"
+	ReasonAmmo: "Best ammo ({0} dmg)"
+	ReasonArmorPiece: "{0} def | {1}"
+	ReasonArmorPieceNoTip: "{0} defense"
+	ReasonHealing: "Restores {0} HP"
+	ReasonDefense: "{0} defense"
+	ReasonWeaponDps: "{0} dmg | ~{1} base DPS | {2}"
+	ReasonMeteorSynergy: "0 mana w/ Meteor Armor"
 }
 
 Loot: {
-	BossNamedDrop: Drops from {0}
-	UnavailableBoss: Unavailable / secret event ({0})
-	HiddenEvent: Hidden / optional boss ({0})
+	BossNamedDrop: "Drops from {0}"
+	UnavailableBoss: "Unavailable / secret event ({0})"
+	HiddenEvent: "Hidden / optional boss ({0})"
 	BossDrop: Boss drop
-	BossRareDrop: Rare boss drop ({0:0.#}%)
-	RareDrop: Rare drop ({0:0.#}%)
-	VeryRareDrop: Very rare farm ({0:0.#}%)
-	ChanceDrop: Drop chance ({0:0.#}%)
-	CommonDrop: Common drop ({0:0.#}%)
+	BossRareDrop: "Rare boss drop ({0:0.#}%)"
+	RareDrop: "Rare drop ({0:0.#}%)"
+	VeryRareDrop: "Very rare farm ({0:0.#}%)"
+	ChanceDrop: "Drop chance ({0:0.#}%)"
+	CommonDrop: "Common drop ({0:0.#}%)"
 	DropGeneric: Enemy drop
+	SeasonalDrop: Seasonal event / drop
 	LockBox: Dungeon / Shadow Key
 	DungeonCrate: Dungeon fishing crate
 	HardmodeCrate: Hardmode fishing crate
 	BasicCrate: Basic fishing crate
 	BiomeCrate: Rare biome/gold crate (RNG)
-	ShopBuy: Bought from {0}
+	ShopBuy: "Bought from {0}"
 	TravellingShop: Travelling Merchant (RNG stock)
-	ShopExpensiveEarly: Expensive early purchase ({0})
-	ShopMidCost: Pricey shop item ({0})
+	ShopExpensiveEarly: "Expensive early purchase ({0})"
+	ShopMidCost: "Pricey shop item ({0})"
 	UndergroundJungle: Underground Jungle
 	UndergroundDesert: Underground Desert / Extractinator
 	UnderworldEarly: Underworld (early hellevator)
@@ -75,4 +124,26 @@ Loot: {
 	SpecialCondition: Special NPC / quest condition
 	ShimmerTransform: Shimmer transmutation
 	TierEstimate: Estimated by tier (mod source hidden)
+	SourceTierEstimate: Estimated progression tier
+	SourceBossDrop: "Drops from {0}"
+	SourceFromBag: "{0} (Treasure Bag: {1})"
+	SourceGlobalDrop: "Global enemy drop ({0:0.#}%)"
+	SourceNpcDrop: "{0} ({1:0.#}%)"
+	SourceLockBox: Golden Lock Box / Obsidian Lock Box
+	SourceDungeonCrate: Dungeon Crate / Stockade Crate
+	SourceHardmodeCrate: Hardmode Fishing Crate
+	SourceLavaCrate: Obsidian Crate / Hellstone Crate
+	SourceBasicCrate: Fishing Crate (Wood / Iron / Gold)
+	SourceBiomeCrate: Biome Fishing Crate
+	SourceGoodieBag: Goodie Bag (Halloween)
+	SourcePresent: Present (Christmas)
+	SourceFishingBag: Fishing / Oyster / Clam Reward
+	SourceSoldBy: "Sold by {0}"
+	SourceMeteor: Mined from Meteorite crash sites
+	SourceUnderworld: Underworld mining (Ash Wood / Hellstone)
+	SourceWorld: World chests / natural gathering
+	SourceInsideBag: "Inside {0}"
+	SourceShimmer: "Shimmer: {0}"
+	SourceShimmerML: "Shimmer (post-Moon Lord): {0}"
+	SourceCraft: "Craft: {0}"
 }

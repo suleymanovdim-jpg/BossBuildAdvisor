@@ -14,25 +14,50 @@ namespace BossBuildAdvisor.Core;
 public static class ItemTooltipAnalyzer
 {
 	private static readonly Regex PercentRegex = new(@"(\d+(?:[.,]\d+)?)\s*%", RegexOptions.Compiled);
-	private static readonly Regex MaxManaRegex = new(@"(?:max(?:imum)?\s+mana\s+by|максимум\s+ман+ы\s+на)\s+(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+	private static readonly Regex MaxManaRegex = new(@"(?:max(?:imum)?\s+mana\s+by|(?:максимум|запас)\s+ман+ы\s+на)\s+(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+	private static readonly Regex PositiveDefenseRegex = new(@"(?:\+\s*\d+\s*(?:defense|к\s+защите|защиты)|(?:increases?|grants?|gain|увеличивает|да[её]т|повышает)\s+(?:your\s+|владельцу\s+)?(?:defense|защиту))", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+	private static readonly Regex RangedWordRegex = new(@"(?<![\p{L}])(?:bow|bows|gun|guns|musket|archery|firearm|пуля|пули|пуль|пулями|лук|луки|луков|лука|луком|стрела|стрелы|стрел|стрелами)(?![\p{L}])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+	private static readonly Regex MinionCountRegex = new(@"(?:max(?:imum)?\s+number\s+of\s+minions|максимальн[а-яё]*\s+(?:число|количество)\s+(?:миньонов|прислужников))[^\d\n|]{0,20}(\d+)|\+(\d+)\s*(?:max\s+)?(?:minion|миньон|прислужник)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+	private static readonly Regex SentryCountRegex = new(@"(?:max(?:imum)?\s+number\s+of\s+sentr(?:y|ies)|максимальн[а-яё]*\s+(?:число|количество)\s+(?:стражей|турелей|часовых))[^\d\n|]{0,20}(\d+)|\+(\d+)\s*(?:max\s+)?(?:sentr(?:y|ies)|страж|турел|часов)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+	private static readonly string[] NonOffensiveDamagePhrases =
+	[
+		"reduces damage taken", "damage taken", "fall damage", "damage from falling",
+		"lava damage", "trap damage", "damage from traps", "contact damage", "touch damage",
+		"after taking damage", "when damaged", "when taking damage",
+		"получаемый урон", "получаемого урона", "урон от падения", "урона от падения",
+		"урон при падении", "урон от лавы", "урона от лавы", "урона от ловушек",
+		"урон при контакте", "после получения урона", "при получении урона"
+	];
+
+	private static readonly string[] ArmorPenStripPhrases =
+	[
+		"ignores enemy defense", "ignores defense", "reduces enemy defense",
+		"игнорирует защиту", "снижает защиту враг", "уменьшает защиту враг"
+	];
 
 	private static readonly string[] BootsKeywords =
 	[
-		"rocket boots", "sprint", "run super fast", "run speed", "movement speed", "fast on", "ice skates", "water walking",
-		"boots", "treads",
-		"скорость движения", "скорость передвижения", "бегать", "спринт", "реактивн", "сапог", "ботин", "протектор", "хождение по воде", "ходить по воде"
+		"rocket boots", "sprint", "run super fast", "run extremely fast", "run insanely fast",
+		"fast on", "ice skates", "water walking", "boots", "treads",
+		"очень быстро бегать", "быстро бегать", "сверхбыстр", "спринт",
+		"реактивн", "сапог", "ботин", "протектор", "хождение по воде", "ходить по воде"
 	];
 
 	private static readonly string[] DashKeywords =
 	[
-		"dash", "double tap", "dodge", "invincibility", "shadow dodge",
-		"рывок", "двойное нажатие", "уклон", "неуязвим"
+		"dash", "double tap", "dodge", "shadow dodge",
+		"рывок", "двойное нажатие", "дважды нажмите", "дважды коснитесь",
+		"броситься", "бросаться", "уклон"
 	];
 
 	private static readonly string[] SurvivabilityKeywords =
 	[
-		"defense", "damage reduction", "reduces damage taken", "life regeneration", "max life", "endurance", "shield", "potion cooldown",
-		"защит", "уменьшает получаемый урон", "снижает получаемый урон", "регенерац", "восстановление здоровья", "максимальное здоровье", "щит", "перезарядку зел"
+		"damage reduction", "reduces damage taken", "life regeneration", "max life",
+		"endurance", "shield", "potion cooldown", "invincibility", "immunity",
+		"уменьшает получаемый урон", "снижает получаемый урон", "регенерац",
+		"восстановление здоровья", "максимальное здоровье", "щит", "перезарядку зел",
+		"неуязвим", "иммунитет"
 	];
 
 	private static readonly string[] ManaKeywords =
@@ -42,13 +67,14 @@ public static class ItemTooltipAnalyzer
 
 	private static readonly string[] MeleeKeywords =
 	[
-		"melee", "whip", "true melee", "ближн", "кнут", "хлыст"
+		"melee", "true melee", "ближн", "истинный ближн", "тяжёлый ближн", "тяжелый ближн"
 	];
 
 	private static readonly string[] RangedKeywords =
 	[
-		"ranged", "ammo", "arrow", "bullet", "bow", "gun",
-		"дальнего боя", "дальний бой", "стрелков", "стрелами", "стрелы", "стрел ", "стрельб", "арбалет", "пули", "пуль", "патрон", "боеприпас", "луков"
+		"ranged", "archery", "ammo", "arrow", "bullet",
+		"дистанцион", "дальнего боя", "дальний бой", "стрелков", "стрел", "лучник",
+		"стрельб", "арбалет", "патрон", "боеприпас"
 	];
 
 	private static readonly string[] MagicKeywords =
@@ -58,25 +84,28 @@ public static class ItemTooltipAnalyzer
 
 	private static readonly string[] SummonKeywords =
 	[
-		"summon", "minion", "sentry", "whip", "призыв", "миньон", "страж", "турел", "хлыст"
+		"summon", "minion", "sentry", "sentries", "whip",
+		"призыв", "миньон", "прислужник", "питомц", "питомец",
+		"страж", "турел", "часов", "кнут"
 	];
 
 	private static readonly string[] GenericCombatKeywords =
 	[
 		"all damage", "damage", "critical strike", "attack speed", "armor penetration",
-		"весь урон", "урон", "критическ", "скорость атаки", "пробивание брони"
+		"весь урон", "урон", "критическ", "скорость атаки", "пробивание брони", "пробивание броне"
 	];
 
 	private static readonly string[] NonCombatUtilityKeywords =
 	[
 		"tile placement", "block placement", "placement speed", "tile range", "block range",
 		"mining speed", "pickaxe speed", "fishing power", "fishing skill", "bait", "critters",
-		"pickup range", "grab range", "wall placement", "wire", "paint",
+		"pickup range", "grab range", "wall placement", "wire", "paint sprayer", "painting",
 		"displays ", "shows ", "depth", "moon phase", "weather", "dps", "rare creatures", "treasured",
 		"скорость размещения", "установки блоков", "размещения блоков", "скорость строительства",
-		"скорость копания", "скорость добычи", "мощность рыбалки", "навык рыбалки", "наживк",
-		"дальность подбора", "дальность сбора", "живност", "покраск", "стен",
-		"показывает ", "отображает ", "глубин", "фаз", "погод", "редких существ"
+		"размещения стен", "установки стен", "скорость копания", "скорость добычи",
+		"мощность рыбалки", "навык рыбалки", "наживк",
+		"дальность подбора", "дальность сбора", "живност", "покраск",
+		"показывает ", "отображает ", "глубины", "глубину", "фазу луны", "погод", "редких существ"
 	];
 
 	public static string GetTooltipText(Item item)
@@ -105,50 +134,44 @@ public static class ItemTooltipAnalyzer
 	public static ItemSemanticProfile Analyze(Item item)
 	{
 		string tip = GetTooltipText(item);
-		string lower = (item.Name + " " + tip).ToLowerInvariant();
+		string nameAndTip = (item.Name + " " + tip).Trim();
+		bool isBuffPotion = !item.potion && item.buffType > 0 && item.buffTime > 0 && item.consumable
+			&& IsCombatPotion(NormalizeLower(nameAndTip), item.buffType);
 
-		bool hasGenericCombat = ContainsAny(lower, GenericCombatKeywords);
+		return AnalyzeCore(nameAndTip, tip, item.type, item.defense, item.wingSlot > 0, isBuffPotion, item.buffType);
+	}
+
+	public static ItemSemanticProfile AnalyzeSetBonus(string setBonusText, int totalDefense = 0)
+	{
+		return AnalyzeCore(setBonusText ?? string.Empty, setBonusText ?? string.Empty, ItemID.None, totalDefense, false, false, 0);
+	}
+
+	private static ItemSemanticProfile AnalyzeCore(string nameAndText, string rawTip, int itemType, int defense, bool isWings, bool isCombatBuffPotion, int buffType)
+	{
+		string lower = NormalizeLower(nameAndText);
+		string offensiveLower = StripPhrases(lower, NonOffensiveDamagePhrases);
+		string defenseLower = StripPhrases(lower, ArmorPenStripPhrases);
+
+		bool hasGenericCombat = ContainsAny(offensiveLower, GenericCombatKeywords);
 
 		var profile = new ItemSemanticProfile
 		{
-			ItemType = item.type,
-			CombinedTooltipText = tip,
+			ItemType = itemType,
+			CombinedTooltipText = rawTip ?? string.Empty,
 			// Only real equipped wings set wingSlot > 0; rocket/running boots with "Allows flight" text must remain Mobility Boots
-			IsWings = item.wingSlot > 0,
+			IsWings = isWings,
 			IsMobilityBoots = ContainsAny(lower, BootsKeywords),
 			IsDashOrDodge = ContainsAny(lower, DashKeywords),
-			IsSurvivability = ContainsAny(lower, SurvivabilityKeywords) || item.defense > 0,
+			IsSurvivability = ContainsAny(lower, SurvivabilityKeywords) || defense > 0 || PositiveDefenseRegex.IsMatch(defenseLower),
 			IsManaUtility = ContainsAny(lower, ManaKeywords),
-			IsCombatBuffPotion = item.buffType > 0 && item.buffTime > 0 && item.consumable && IsCombatPotion(lower, item.buffType),
-			HasGenericCombat = hasGenericCombat
+			IsCombatBuffPotion = isCombatBuffPotion,
+			HasGenericCombat = hasGenericCombat,
+			SummonSlotBonus = ExtractSlotCount(lower, MinionCountRegex, "minion", "миньон", "прислужник"),
+			SentrySlotBonus = ExtractSlotCount(lower, SentryCountRegex, "sentr", "страж", "турел", "часов")
 		};
 
-		float maxPct = ExtractMaxPercent(lower);
+		float maxPct = ExtractMaxPercent(offensiveLower);
 		float pctBoost = Math.Clamp(maxPct, 0f, 60f) * 0.6f;
-
-		if (hasGenericCombat && !IsClassSpecific(lower))
-			profile.GenericBonusScore += 18f + pctBoost;
-
-		if (profile.IsSurvivability)
-			profile.GenericBonusScore += 8f + item.defense * 1.5f;
-
-		if (!hasGenericCombat && !profile.IsWings && !profile.IsMobilityBoots && !profile.IsDashOrDodge && item.defense < 2
-			&& ContainsAny(lower, NonCombatUtilityKeywords))
-		{
-			profile.IsPureNonCombatUtility = !IsClassSpecific(lower);
-		}
-
-		// Estimate bonus minion/sentry slots
-		if (lower.Contains("minion") || lower.Contains("миньон"))
-		{
-			if (lower.Contains("max number of minions") || lower.Contains("increases your max number") || lower.Contains("слот") || lower.Contains("максимальное количество миньонов"))
-				profile.SummonSlotBonus += 1f;
-		}
-		if (lower.Contains("sentry") || lower.Contains("страж") || lower.Contains("турел"))
-		{
-			if (lower.Contains("max number") || lower.Contains("слот") || lower.Contains("максимальное количество"))
-				profile.SentrySlotBonus += 1f;
-		}
 
 		// Score every loaded DamageClass (vanilla + any modded classes like Rogue/Bard/Druid/etc.)
 		for (int i = 0; i < DamageClassLoader.DamageClassCount; i++)
@@ -157,40 +180,111 @@ public static class ItemTooltipAnalyzer
 			if (dc == null || dc == DamageClass.Default)
 				continue;
 
-			float affinity = ComputeClassAffinity(lower, dc, pctBoost, profile);
+			float affinity = ComputeClassAffinity(offensiveLower, lower, dc, pctBoost, profile, buffType);
 			if (affinity > 0f)
 				profile.ClassAffinityScores[dc.Type] = affinity;
+		}
+
+		bool isClassSpecific = profile.ClassAffinityScores.Count > 0;
+		if (hasGenericCombat && !isClassSpecific)
+			profile.GenericBonusScore += 18f + pctBoost;
+
+		if (profile.IsSurvivability)
+			profile.GenericBonusScore += 8f + defense * 1.5f;
+
+		if (!hasGenericCombat && !isClassSpecific && !profile.IsWings && !profile.IsMobilityBoots && !profile.IsDashOrDodge && !profile.IsSurvivability && defense < 2
+			&& ContainsAny(lower, NonCombatUtilityKeywords))
+		{
+			profile.IsPureNonCombatUtility = true;
 		}
 
 		return profile;
 	}
 
-	private static float ComputeClassAffinity(string lower, DamageClass dc, float pctBoost, ItemSemanticProfile profile)
+	private static string NormalizeLower(string text)
+	{
+		if (string.IsNullOrEmpty(text))
+			return string.Empty;
+		return text.Replace('\u00a0', ' ').Replace('\u202f', ' ').ToLowerInvariant();
+	}
+
+	private static string StripPhrases(string text, string[] phrases)
+	{
+		string s = text;
+		for (int i = 0; i < phrases.Length; i++)
+		{
+			if (s.Contains(phrases[i]))
+				s = s.Replace(phrases[i], " ");
+		}
+		return s;
+	}
+
+	private static float ExtractSlotCount(string lower, Regex regex, params string[] fallbackKeywords)
+	{
+		Match m = regex.Match(lower);
+		if (m.Success)
+		{
+			for (int g = 1; g < m.Groups.Count; g++)
+			{
+				if (m.Groups[g].Success && int.TryParse(m.Groups[g].Value, out int parsed) && parsed > 0)
+					return parsed;
+			}
+		}
+
+		bool hasEntity = ContainsAny(lower, fallbackKeywords);
+		if (!hasEntity)
+			return 0f;
+
+		if (lower.Contains("max number") || lower.Contains("слот") || lower.Contains("максимальное число") || lower.Contains("максимальное количество"))
+			return 1f;
+
+		return 0f;
+	}
+
+	private static float ComputeClassAffinity(string offensiveLower, string fullLower, DamageClass dc, float pctBoost, ItemSemanticProfile profile, int buffType)
 	{
 		float score = 0f;
 
-		if (dc.CountsAsClass(DamageClass.Melee) && ContainsAny(lower, MeleeKeywords))
-			score += 24f + pctBoost;
-		else if (dc.CountsAsClass(DamageClass.Ranged) && ContainsAny(lower, RangedKeywords))
-			score += 24f + pctBoost;
-		else if (dc.CountsAsClass(DamageClass.Magic) && ContainsAny(lower, MagicKeywords))
+		if (dc == DamageClass.Melee || dc == DamageClass.MeleeNoSpeed)
 		{
-			float manaBonus = Math.Clamp(ExtractMaxMana(lower) * 0.2f, 0f, 12f);
-			if (lower.Contains("mana usage") || lower.Contains("mana cost") || lower.Contains("в мане") || lower.Contains("расход маны"))
-				manaBonus += 6f;
-			score += 24f + pctBoost + manaBonus;
+			if (ContainsAny(offensiveLower, MeleeKeywords) || buffType == BuffID.Tipsy)
+				score += 24f + pctBoost;
 		}
-		else if (dc.CountsAsClass(DamageClass.Summon) && ContainsAny(lower, SummonKeywords))
-			score += 24f + pctBoost + profile.SummonSlotBonus * 18f + profile.SentrySlotBonus * 8f;
+		else if (dc == DamageClass.Ranged)
+		{
+			if (ContainsAny(offensiveLower, RangedKeywords) || RangedWordRegex.IsMatch(offensiveLower) || buffType == BuffID.Archery)
+				score += 24f + pctBoost;
+		}
+		else if (dc == DamageClass.Magic)
+		{
+			if (ContainsAny(offensiveLower, MagicKeywords) || buffType is BuffID.MagicPower or BuffID.ManaRegeneration)
+			{
+				float manaBonus = Math.Clamp(ExtractMaxMana(fullLower) * 0.2f, 0f, 12f);
+				if (fullLower.Contains("mana usage") || fullLower.Contains("mana cost") || fullLower.Contains("costs 0 mana")
+					|| fullLower.Contains("в мане") || fullLower.Contains("расход маны") || fullLower.Contains("не расходует ману"))
+					manaBonus += 6f;
+				score += 24f + pctBoost + manaBonus;
+			}
+		}
+		else if (dc == DamageClass.Summon || dc == DamageClass.SummonMeleeSpeed)
+		{
+			if (ContainsAny(offensiveLower, SummonKeywords) || profile.SummonSlotBonus > 0f || profile.SentrySlotBonus > 0f || buffType == BuffID.Summoning)
+				score += 24f + pctBoost + profile.SummonSlotBonus * 18f + profile.SentrySlotBonus * 8f;
+		}
+		else if (dc != DamageClass.Generic && dc != DamageClass.Default)
+		{
+			// Dynamic match for any custom mod DamageClass (or vanilla Throwing) by internal name, display name, or stem
+			string internalWord = CleanClassToken(dc.Name);
+			string displayWord = CleanClassToken(dc.DisplayName?.Value);
+			string displayStem = TrimRussianAdjectiveStem(displayWord);
 
-		// Dynamic match for any custom mod DamageClass by its internal name or localized display name
-		string internalWord = CleanClassToken(dc.Name);
-		string displayWord = CleanClassToken(dc.DisplayName?.Value);
-
-		if (internalWord.Length >= 3 && lower.Contains(internalWord))
-			score += 26f + pctBoost;
-		else if (displayWord.Length >= 3 && lower.Contains(displayWord))
-			score += 26f + pctBoost;
+			if ((internalWord.Length >= 3 && offensiveLower.Contains(internalWord))
+				|| (displayWord.Length >= 3 && offensiveLower.Contains(displayWord))
+				|| (displayStem.Length >= 4 && offensiveLower.Contains(displayStem)))
+			{
+				score += 26f + pctBoost;
+			}
+		}
 
 		return score;
 	}
@@ -200,26 +294,32 @@ public static class ItemTooltipAnalyzer
 		if (string.IsNullOrWhiteSpace(raw))
 			return string.Empty;
 
-		string s = raw.Trim().ToLowerInvariant();
-		s = s.Replace("damageclass", "").Replace("damage", "").Replace("урон", "").Trim();
+		string s = NormalizeLower(raw).Trim();
+		s = s.Replace("damageclass", "").Replace("damage", "")
+			.Replace("ед.", "").Replace("урона", "").Replace("урон", "")
+			.Trim();
 		return s;
 	}
 
-	private static bool IsClassSpecific(string lower)
+	private static string TrimRussianAdjectiveStem(string s)
 	{
-		return ContainsAny(lower, MeleeKeywords)
-			|| ContainsAny(lower, RangedKeywords)
-			|| ContainsAny(lower, MagicKeywords)
-			|| ContainsAny(lower, SummonKeywords);
+		if (string.IsNullOrWhiteSpace(s) || s.Length < 6)
+			return s;
+
+		string first = s.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+		if (first.Length >= 6 && (first.EndsWith("ого") || first.EndsWith("его") || first.EndsWith("ой") || first.EndsWith("ей")))
+			return first[..^3];
+		return first;
 	}
 
 	private static bool IsCombatPotion(string lower, int buffType)
 	{
-		// Skip cosmetic/building/fishing-only buffs when recommending boss fight potions
+		// Skip cosmetic, confetti/gold flasks, building, and fishing buffs when recommending boss fight potions
 		if (buffType is BuffID.Builder or BuffID.Mining or BuffID.Fishing or BuffID.Sonar or BuffID.Crate
 			or BuffID.Shine or BuffID.NightOwl or BuffID.Spelunker or BuffID.Hunter or BuffID.Dangersense
 			or BuffID.Gills or BuffID.Flipper or BuffID.WaterWalking or BuffID.ObsidianSkin or BuffID.Featherfall
-			or BuffID.Gravitation or BuffID.Invisibility or BuffID.Calm or BuffID.Battle or BuffID.BiomeSight)
+			or BuffID.Gravitation or BuffID.Invisibility or BuffID.Calm or BuffID.Battle or BuffID.BiomeSight
+			or BuffID.WeaponImbueConfetti or BuffID.WeaponImbueGold or BuffID.Stinky or BuffID.Lovestruck)
 			return false;
 
 		if (buffType is BuffID.Ironskin or BuffID.Regeneration or BuffID.Swiftness or BuffID.Endurance
@@ -231,7 +331,7 @@ public static class ItemTooltipAnalyzer
 		return ContainsAny(lower, GenericCombatKeywords)
 			|| ContainsAny(lower, SurvivabilityKeywords)
 			|| ContainsAny(lower, MeleeKeywords)
-			|| ContainsAny(lower, RangedKeywords)
+			|| ContainsAny(lower, RangedKeywords) || RangedWordRegex.IsMatch(lower)
 			|| ContainsAny(lower, MagicKeywords)
 			|| ContainsAny(lower, SummonKeywords);
 	}
@@ -272,7 +372,7 @@ public static class ItemTooltipAnalyzer
 	public static string FormatClassDisplayName(DamageClass dc)
 	{
 		if (dc == null)
-			return "Auto";
+			return Terraria.Localization.Language.GetTextValue("Mods.BossBuildAdvisor.UI.ClassAuto");
 
 		bool ru = Terraria.Localization.Language.ActiveCulture?.Name?.StartsWith("ru", StringComparison.OrdinalIgnoreCase) == true;
 		if (dc == DamageClass.Melee || dc == DamageClass.MeleeNoSpeed)
@@ -286,13 +386,26 @@ public static class ItemTooltipAnalyzer
 		if (dc == DamageClass.Throwing)
 			return ru ? "Метатель" : "Throwing";
 
-		string raw = dc.DisplayName?.Value ?? dc.Name ?? "Class";
+		string raw = (dc.DisplayName?.Value ?? dc.Name ?? "Class").Replace('\u00a0', ' ').Replace('\u202f', ' ');
 		string s = raw.Trim()
 			.Replace("ед.", "", StringComparison.OrdinalIgnoreCase)
 			.Replace("урона", "", StringComparison.OrdinalIgnoreCase)
 			.Replace("урон", "", StringComparison.OrdinalIgnoreCase)
 			.Replace("damage", "", StringComparison.OrdinalIgnoreCase)
 			.Trim();
+		if (ru && !string.IsNullOrWhiteSpace(s))
+		{
+			string[] words = s.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+			for (int i = 0; i < words.Length; i++)
+			{
+				string w = words[i];
+				if (w.Length >= 6 && w.EndsWith("ого", StringComparison.OrdinalIgnoreCase))
+					words[i] = w[..^3] + "ый";
+				else if (w.Length >= 6 && w.EndsWith("его", StringComparison.OrdinalIgnoreCase))
+					words[i] = w[..^3] + "ий";
+			}
+			s = string.Join(' ', words);
+		}
 		if (string.IsNullOrWhiteSpace(s))
 			s = dc.Name ?? "Class";
 		if (s.Length > 1)

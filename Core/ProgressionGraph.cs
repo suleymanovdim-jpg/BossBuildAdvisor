@@ -21,11 +21,14 @@ public sealed class ProgressionGraph
 	public Dictionary<int, HashSet<int>> EquipmentUpgradesTo { get; } = new();
 	public int BuildDurationMs { get; private set; }
 
-	private readonly Dictionary<int, float> _tileProgression = new();
+	private sealed record TileGateInfo(float Prog, bool RequiresHardmode, ConditionGate Gate, ObtainabilityDifficulty Difficulty, string Reason);
+
+	private readonly Dictionary<int, TileGateInfo[]> _tileGates = new();
 	private readonly Dictionary<int, float> _minimumItemFloor = new();
 	private readonly Dictionary<int, (ObtainabilityDifficulty Difficulty, string Reason)> _materialDifficulty = new();
 	private readonly List<int> _allValidItemIds = new();
 	private readonly Dictionary<int, List<(DropRateInfo Drop, ConditionGate Gate)>> _openableBags = new();
+	private readonly Dictionary<int, List<int>> _tilePlacers = new();
 	private float _wofProg = 7.0f;
 
 	public void Build(Mod mod, BossCatalog catalog)
@@ -36,13 +39,15 @@ public sealed class ProgressionGraph
 		Semantics.Clear();
 		DirectRecipesForItem.Clear();
 		EquipmentUpgradesTo.Clear();
-		_tileProgression.Clear();
+		_tileGates.Clear();
 		_minimumItemFloor.Clear();
 		_materialDifficulty.Clear();
 		_allValidItemIds.Clear();
 		_openableBags.Clear();
+		_tilePlacers.Clear();
 
 		InitializeItemBaselineAndSemantics(catalog);
+		BuildTilePlacerMap();
 		SeedVanillaProgressionFloors(catalog);
 		IndexRecipesAndDirectUpgrades();
 		SeedBossLootAndBags(catalog);
@@ -50,6 +55,8 @@ public sealed class ProgressionGraph
 		CollectOpenableBagsAndCrates(catalog);
 		SeedNpcShops(catalog);
 		SeedGuaranteedBiomeResources(catalog);
+		// Propagate bags/crates BEFORE uncrafted fallback so Hardmode crate gems/souls get verified crate sources first.
+		PropagateOpenableBags(catalog);
 		SeedUncraftedWorldMaterials(catalog);
 		RunRelaxationPasses(catalog, 12);
 		SeedCyclicAndFlooredMaterials(catalog);
@@ -63,6 +70,23 @@ public sealed class ProgressionGraph
 		sw.Stop();
 		BuildDurationMs = (int)sw.ElapsedMilliseconds;
 		mod.Logger.Info($"[BossBuildAdvisor] Indexed {Items.Count} items across {catalog.AllStages.Count} boss/event stages in {BuildDurationMs} ms (BossChecklist={catalog.UsedBossChecklist}).");
+	}
+
+	private void BuildTilePlacerMap()
+	{
+		foreach (int itemId in _allValidItemIds)
+		{
+			Item item = ContentSamples.ItemsByType[itemId];
+			if (item.createTile >= TileID.Dirt)
+			{
+				if (!_tilePlacers.TryGetValue(item.createTile, out List<int> list))
+				{
+					list = new List<int>();
+					_tilePlacers[item.createTile] = list;
+				}
+				list.Add(itemId);
+			}
+		}
 	}
 
 	private void InitializeItemBaselineAndSemantics(BossCatalog catalog)
@@ -85,7 +109,7 @@ public sealed class ProgressionGraph
 				UnlockProgression = float.MaxValue,
 				SourceType = ItemSourceType.EstimatedTier,
 				Confidence = SourceConfidence.TierEstimated,
-				SourceSummary = "Tier estimate",
+				SourceSummary = LootLoc("SourceTierEstimate"),
 				ExpertOnly = item.expert,
 				MasterOnly = item.master
 			};
@@ -187,11 +211,46 @@ public sealed class ProgressionGraph
 		{
 			float postBossProg = stage.Progression + 0.001f;
 			bool postWof = stage.Progression >= catalog.WallOfFleshProgression;
-			bool unavailable = !stage.IsAvailable;
+			bool unavailable = !Main.gameMenu && !stage.IsAvailable;
 			bool earlyHidden = !stage.IsVisibleOnChecklist && !stage.IsDowned && stage.Progression < ks;
+			bool isEoWStage = stage.NpcIds.Contains(NPCID.EaterofWorldsHead);
+			bool isBoCStage = stage.NpcIds.Contains(NPCID.BrainofCthulhu);
+			var coveredDropIds = new HashSet<int>();
+			string bossSummary = LootLoc("SourceBossDrop", stage.DisplayName);
+
+			foreach (int npcId in stage.NpcIds)
+			{
+				var rules = Main.ItemDropsDB.GetRulesForNPCID(npcId, includeGlobalDrops: false);
+				foreach (DropRateInfo dr in FlattenDropRules(rules))
+				{
+					coveredDropIds.Add(dr.itemId);
+					RegisterStageDrop(stage, dr, postBossProg, postWof, bossSummary, false, ks, isEoWStage, isBoCStage, catalog);
+				}
+			}
+
+			if (stage.TreasureBagId > 0)
+			{
+				var bagRules = Main.ItemDropsDB.GetRulesForItemID(stage.TreasureBagId);
+				string bagName = Lang.GetItemNameValue(stage.TreasureBagId);
+				string bagSummary = LootLoc("SourceFromBag", bagName, stage.DisplayName);
+				foreach (DropRateInfo dr in FlattenDropRules(bagRules))
+				{
+					coveredDropIds.Add(dr.itemId);
+					RegisterStageDrop(stage, dr, postBossProg, postWof, bagSummary, true, ks, isEoWStage, isBoCStage, catalog);
+				}
+			}
+
+			foreach (DropRateInfo dr in stage.DropRates)
+			{
+				if (coveredDropIds.Add(dr.itemId))
+					RegisterStageDrop(stage, dr, postBossProg, postWof, bossSummary, false, ks, isEoWStage, isBoCStage, catalog);
+			}
 
 			foreach (int lootId in stage.LootItemIds)
 			{
+				if (coveredDropIds.Contains(lootId))
+					continue;
+
 				float itemStage = postBossProg;
 				if (stage.IsEvent && ContentSamples.ItemsByType.TryGetValue(lootId, out Item evItem))
 					itemStage = Math.Max(itemStage, EstimateDropRarityFloor(evItem, catalog));
@@ -209,27 +268,15 @@ public sealed class ProgressionGraph
 					reason = LootLoc("HiddenEvent", stage.DisplayName);
 				}
 
+				ConditionGate fallbackGate = new ConditionGate
+				{
+					CorruptOnly = isEoWStage && !isBoCStage,
+					CrimsonOnly = isBoCStage && !isEoWStage
+				};
+
 				TryRegisterSource(lootId, itemStage, ItemSourceType.BossDrop, SourceConfidence.Verified,
-					$"Drops from {stage.DisplayName}", postWof || itemStage > catalog.WallOfFleshProgression, default,
+					bossSummary, postWof || itemStage > catalog.WallOfFleshProgression, fallbackGate,
 					diff, reason, 1f);
-			}
-
-			foreach (DropRateInfo dr in stage.DropRates)
-				RegisterStageDrop(stage, dr, postBossProg, postWof, $"Drops from {stage.DisplayName}", false, ks, catalog);
-
-			foreach (int npcId in stage.NpcIds)
-			{
-				var rules = Main.ItemDropsDB.GetRulesForNPCID(npcId, includeGlobalDrops: false);
-				foreach (DropRateInfo dr in FlattenDropRules(rules))
-					RegisterStageDrop(stage, dr, postBossProg, postWof, $"Drops from {stage.DisplayName}", false, ks, catalog);
-			}
-
-			if (stage.TreasureBagId > 0)
-			{
-				var bagRules = Main.ItemDropsDB.GetRulesForItemID(stage.TreasureBagId);
-				string bagName = Lang.GetItemNameValue(stage.TreasureBagId);
-				foreach (DropRateInfo dr in FlattenDropRules(bagRules))
-					RegisterStageDrop(stage, dr, postBossProg, postWof, $"From {bagName} ({stage.DisplayName})", true, ks, catalog);
 			}
 		}
 	}
@@ -242,15 +289,31 @@ public sealed class ProgressionGraph
 		string summary,
 		bool expertBag,
 		float ks,
+		bool isEoWStage,
+		bool isBoCStage,
 		BossCatalog catalog)
 	{
 		ConditionGate gate = ConditionProgressionMapper.EvaluateDropConditions(dr.conditions, catalog);
+		if (gate.Unobtainable)
+			return;
+
 		float itemStage = Math.Max(postBossProg, gate.MinProgression);
 		if (stage.IsEvent && gate.MinProgression <= 0.01f && ContentSamples.ItemsByType.TryGetValue(dr.itemId, out Item evItem))
 			itemStage = Math.Max(itemStage, EstimateDropRarityFloor(evItem, catalog));
 
 		(ObtainabilityDifficulty diff, string reason) = EvaluateDropDifficulty(dr.dropRate, !stage.IsEvent);
-		if (!stage.IsAvailable && diff < ObtainabilityDifficulty.VeryHard)
+		if (gate.IsChallengeCondition)
+		{
+			diff = ObtainabilityDifficulty.VeryHard;
+			reason = !string.IsNullOrWhiteSpace(gate.SpecialConditionText) ? gate.SpecialConditionText : LootLoc("SpecialCondition");
+		}
+		else if (gate.IsSeasonal && diff < ObtainabilityDifficulty.Hard)
+		{
+			diff = ObtainabilityDifficulty.Hard;
+			reason = LootLoc("SeasonalDrop");
+		}
+
+		if (!Main.gameMenu && !stage.IsAvailable && diff < ObtainabilityDifficulty.VeryHard)
 		{
 			diff = ObtainabilityDifficulty.VeryHard;
 			reason = LootLoc("UnavailableBoss", stage.DisplayName);
@@ -263,6 +326,10 @@ public sealed class ProgressionGraph
 
 		if (expertBag)
 			gate = gate with { ExpertOnly = true };
+		if (isEoWStage && !isBoCStage && !gate.CrimsonOnly)
+			gate = gate with { CorruptOnly = true };
+		else if (isBoCStage && !isEoWStage && !gate.CorruptOnly)
+			gate = gate with { CrimsonOnly = true };
 
 		TryRegisterSource(dr.itemId, itemStage, ItemSourceType.BossDrop, SourceConfidence.Verified, summary,
 			postWof || gate.RequiresHardmode || itemStage > catalog.WallOfFleshProgression, gate,
@@ -278,47 +345,74 @@ public sealed class ProgressionGraph
 				bossNpcSet.Add(npcId);
 		}
 
+		// Global drop rules (Souls of Light/Night, global yoyos, Biome Keys, Pirate Map, Goodie Bag, Present, Living Flames)
+		var globalRules = Main.ItemDropsDB.GetRulesForNPCID(int.MinValue, includeGlobalDrops: true);
+		RegisterNpcDropRuleSet(globalRules, 0f, isGlobal: true, npcName: null, catalog);
+
 		foreach ((int npcId, NPC npc) in ContentSamples.NpcsByNetId)
 		{
-			if (npc == null || npc.townNPC || bossNpcSet.Contains(npcId))
+			if (npc == null || bossNpcSet.Contains(npcId))
 				continue;
 
 			var rules = Main.ItemDropsDB.GetRulesForNPCID(npcId, includeGlobalDrops: false);
 			if (rules == null || rules.Count == 0)
 				continue;
 
-			float npcStatFloor = EstimateNpcMinimumStage(npc, catalog);
+			float npcStatFloor = npc.townNPC
+				? GetTownNpcMinimumStage(npcId, catalog)
+				: EstimateNpcMinimumStage(npc, catalog);
 			string npcName = Lang.GetNPCNameValue(npcId);
 			if (string.IsNullOrWhiteSpace(npcName))
 				npcName = npc.TypeName;
 
-			foreach (DropRateInfo dr in FlattenDropRules(rules))
+			RegisterNpcDropRuleSet(rules, npcStatFloor, isGlobal: false, npcName, catalog);
+		}
+	}
+
+	private void RegisterNpcDropRuleSet(List<IItemDropRule> rules, float npcFloor, bool isGlobal, string npcName, BossCatalog catalog)
+	{
+		if (rules == null || rules.Count == 0)
+			return;
+
+		foreach (DropRateInfo dr in FlattenDropRules(rules))
+		{
+			ConditionGate gate = ConditionProgressionMapper.EvaluateDropConditions(dr.conditions, catalog);
+			if (gate.Unobtainable)
+				continue;
+
+			float stage = Math.Max(npcFloor, gate.MinProgression);
+			if (gate.MinProgression <= 0.01f && !gate.PreHardmodeOnly && ContentSamples.ItemsByType.TryGetValue(dr.itemId, out Item dropItem))
 			{
-				// Ignore pure easter-egg drops (< 0.1%)
-				if (dr.dropRate > 0f && dr.dropRate < 0.001f)
-					continue;
-
-				ConditionGate gate = ConditionProgressionMapper.EvaluateDropConditions(dr.conditions, catalog);
-				float stage = Math.Max(npcStatFloor, gate.MinProgression);
-				if (gate.MinProgression <= 0.01f && ContentSamples.ItemsByType.TryGetValue(dr.itemId, out Item dropItem))
-				{
-					float rareFloor = EstimateDropRarityFloor(dropItem, catalog);
-					stage = Math.Max(stage, rareFloor);
-				}
-
-				(ObtainabilityDifficulty diff, string reason) = EvaluateDropDifficulty(dr.dropRate, isBossDrop: false);
-				bool reqHardmode = gate.RequiresHardmode || stage > catalog.WallOfFleshProgression;
-
-				TryRegisterSource(dr.itemId, stage, ItemSourceType.NpcDrop, SourceConfidence.Verified,
-					$"Drop: {npcName} ({dr.dropRate * 100f:0.#}%)", reqHardmode, gate,
-					diff, $"{npcName}: {reason}", dr.dropRate);
+				float rareFloor = EstimateDropRarityFloor(dropItem, catalog);
+				stage = Math.Max(stage, rareFloor);
 			}
+
+			(ObtainabilityDifficulty diff, string reason) = EvaluateDropDifficulty(dr.dropRate, isBossDrop: false);
+			if (dr.dropRate > 0f && dr.dropRate < 0.001f)
+				diff = ObtainabilityDifficulty.VeryHard;
+			if (gate.IsSeasonal && diff < ObtainabilityDifficulty.Hard)
+			{
+				diff = ObtainabilityDifficulty.Hard;
+				reason = LootLoc("SeasonalDrop");
+			}
+
+			bool reqHardmode = !gate.PreHardmodeOnly && (gate.RequiresHardmode || stage > catalog.WallOfFleshProgression);
+			string summary = isGlobal
+				? LootLoc("SourceGlobalDrop", dr.dropRate * 100f)
+				: LootLoc("SourceNpcDrop", npcName, dr.dropRate * 100f);
+			string fullReason = isGlobal ? reason : $"{npcName}: {reason}";
+
+			TryRegisterSource(dr.itemId, stage, ItemSourceType.NpcDrop, SourceConfidence.Verified,
+				summary, reqHardmode, gate, diff, fullReason, dr.dropRate);
 		}
 	}
 
 	private void CollectOpenableBagsAndCrates(BossCatalog catalog)
 	{
 		float ks = catalog.GetProgressionForNpc(NPCID.KingSlime, 1f);
+		float eow = catalog.GetProgressionForNpc(NPCID.EaterofWorldsHead, 3f);
+		float boc = catalog.GetProgressionForNpc(NPCID.BrainofCthulhu, eow);
+		float evil = Math.Min(eow, boc);
 		float skel = catalog.GetProgressionForNpc(NPCID.SkeletronHead, 5f);
 		float wof = catalog.WallOfFleshProgression;
 
@@ -348,32 +442,55 @@ public sealed class ProgressionGraph
 			if (itemId == ItemID.LockBox || itemId == ItemID.ObsidianLockbox)
 			{
 				TryRegisterSource(itemId, skel + 0.01f, ItemSourceType.WorldTier, SourceConfidence.Verified,
-					"Dungeon / Shadow Key", false, default, ObtainabilityDifficulty.Medium, LootLoc("LockBox"), 1f);
+					LootLoc("SourceLockBox"), false, default, ObtainabilityDifficulty.Medium, LootLoc("LockBox"), 1f);
 			}
 			else if (itemId == ItemID.DungeonFishingCrateHard)
 			{
 				TryRegisterSource(itemId, wof + 0.05f, ItemSourceType.BagOrCrate, SourceConfidence.Verified,
-					"Hardmode Dungeon Crate", true, default, ObtainabilityDifficulty.Hard, LootLoc("DungeonCrate"), 1f);
+					LootLoc("SourceDungeonCrate"), true, default, ObtainabilityDifficulty.Hard, LootLoc("DungeonCrate"), 1f);
 			}
 			else if (itemId == ItemID.DungeonFishingCrate)
 			{
 				TryRegisterSource(itemId, skel + 0.01f, ItemSourceType.BagOrCrate, SourceConfidence.Verified,
-					"Dungeon Crate", false, default, ObtainabilityDifficulty.Hard, LootLoc("DungeonCrate"), 1f);
+					LootLoc("SourceDungeonCrate"), false, default, ObtainabilityDifficulty.Hard, LootLoc("DungeonCrate"), 1f);
 			}
 			else if (ItemID.Sets.IsFishingCrateHardmode[itemId])
 			{
 				TryRegisterSource(itemId, wof + 0.05f, ItemSourceType.BagOrCrate, SourceConfidence.Verified,
-					"Hardmode Fishing Crate", true, default, ObtainabilityDifficulty.Hard, LootLoc("HardmodeCrate"), 1f);
+					LootLoc("SourceHardmodeCrate"), true, default, ObtainabilityDifficulty.Hard, LootLoc("HardmodeCrate"), 1f);
+			}
+			else if (itemId == ItemID.LavaCrate)
+			{
+				TryRegisterSource(itemId, Math.Max(evil + 0.05f, 3.05f), ItemSourceType.BagOrCrate, SourceConfidence.Verified,
+					LootLoc("SourceLavaCrate"), false, default, ObtainabilityDifficulty.Hard, LootLoc("BiomeCrate"), 1f);
 			}
 			else if (itemId is ItemID.WoodenCrate or ItemID.IronCrate)
 			{
 				TryRegisterSource(itemId, itemId == ItemID.WoodenCrate ? 0.6f : 1.0f, ItemSourceType.BagOrCrate, SourceConfidence.Verified,
-					"Fishing Crate", false, default, ObtainabilityDifficulty.Medium, LootLoc("BasicCrate"), 1f);
+					LootLoc("SourceBasicCrate"), false, default, ObtainabilityDifficulty.Medium, LootLoc("BasicCrate"), 1f);
 			}
 			else if (ItemID.Sets.IsFishingCrate[itemId])
 			{
 				TryRegisterSource(itemId, Math.Max(ks + 0.5f, 1.5f), ItemSourceType.BagOrCrate, SourceConfidence.Verified,
-					"Biome / Gold Fishing Crate", false, default, ObtainabilityDifficulty.Hard, LootLoc("BiomeCrate"), 1f);
+					LootLoc("SourceBiomeCrate"), false, default, ObtainabilityDifficulty.Hard, LootLoc("BiomeCrate"), 1f);
+			}
+			else if (itemId == ItemID.GoodieBag)
+			{
+				TryRegisterSource(itemId, 0.8f, ItemSourceType.WorldTier, SourceConfidence.Verified,
+					LootLoc("SourceGoodieBag"), false, default,
+					Main.halloween ? ObtainabilityDifficulty.Medium : ObtainabilityDifficulty.Hard, LootLoc("SeasonalDrop"), 1f);
+			}
+			else if (itemId == ItemID.Present)
+			{
+				TryRegisterSource(itemId, 0.8f, ItemSourceType.WorldTier, SourceConfidence.Verified,
+					LootLoc("SourcePresent"), false, default,
+					Main.xMas ? ObtainabilityDifficulty.Medium : ObtainabilityDifficulty.Hard, LootLoc("SeasonalDrop"), 1f);
+			}
+			else if (itemId is ItemID.HerbBag or ItemID.CanOfWorms or ItemID.Oyster)
+			{
+				float stage = itemId == ItemID.Oyster ? 1.2f : 0.5f;
+				TryRegisterSource(itemId, stage, ItemSourceType.WorldTier, SourceConfidence.Verified,
+					LootLoc("SourceFishingBag"), false, default, ObtainabilityDifficulty.Medium, LootLoc("WorldChest"), 1f);
 			}
 		}
 	}
@@ -388,6 +505,7 @@ public sealed class ProgressionGraph
 				npcName = ContentSamples.NpcsByNetId.TryGetValue(shop.NpcType, out NPC n) ? n.TypeName : "Merchant";
 
 			bool isTravellingMerchant = shop.NpcType == NPCID.TravellingMerchant;
+			bool isSkeletonMerchant = shop.NpcType == NPCID.SkeletonMerchant;
 
 			foreach (AbstractNPCShop.Entry entry in shop.ActiveEntries)
 			{
@@ -395,11 +513,14 @@ public sealed class ProgressionGraph
 					continue;
 
 				ConditionGate gate = ConditionProgressionMapper.EvaluateRecipeConditions(entry.Conditions, catalog);
+				if (gate.Unobtainable)
+					continue;
+
 				float stage = Math.Max(npcUnlock, gate.MinProgression);
-				if (gate.MinProgression <= 0.01f)
+				if (!gate.PreHardmodeOnly)
 					stage = Math.Max(stage, EstimateDropRarityFloor(entry.Item, catalog));
 
-				bool reqHm = gate.RequiresHardmode || stage > catalog.WallOfFleshProgression;
+				bool reqHm = !gate.PreHardmodeOnly && (gate.RequiresHardmode || stage > catalog.WallOfFleshProgression);
 
 				ObtainabilityDifficulty diff = ObtainabilityDifficulty.Easy;
 				string reason = LootLoc("ShopBuy", npcName);
@@ -407,6 +528,16 @@ public sealed class ProgressionGraph
 				{
 					diff = ObtainabilityDifficulty.Hard;
 					reason = LootLoc("TravellingShop");
+				}
+				else if (isSkeletonMerchant)
+				{
+					diff = ObtainabilityDifficulty.Medium;
+					reason = LootLoc("ShopBuy", npcName);
+				}
+				else if (gate.IsSeasonal)
+				{
+					diff = ObtainabilityDifficulty.Hard;
+					reason = LootLoc("SeasonalDrop");
 				}
 				else if (entry.Item.value >= 250000 && stage < 3.5f)
 				{
@@ -420,9 +551,33 @@ public sealed class ProgressionGraph
 				}
 
 				TryRegisterSource(entry.Item.type, stage, ItemSourceType.NpcShop, SourceConfidence.Verified,
-					$"Sold by {npcName}", reqHm, gate, diff, reason, 1f);
+					LootLoc("SourceSoldBy", npcName), reqHm, gate, diff, reason, 1f);
 			}
 		}
+	}
+
+	private void SeedTileGateFloor(int tileId, float prog, bool requiresHardmode, ObtainabilityDifficulty diff, string reason)
+	{
+		if (!_tileGates.TryGetValue(tileId, out TileGateInfo[] arr))
+		{
+			arr = new TileGateInfo[3];
+			_tileGates[tileId] = arr;
+		}
+		var info = new TileGateInfo(prog, requiresHardmode, default, diff, reason ?? string.Empty);
+		for (int b = (int)diff <= (int)ObtainabilityDifficulty.Medium ? 0 : (diff == ObtainabilityDifficulty.Hard ? 1 : 2); b < 3; b++)
+			arr[b] = info;
+	}
+
+	private TileGateInfo GetTileGate(int tileId, int filterIdx)
+	{
+		if (!_tileGates.TryGetValue(tileId, out TileGateInfo[] arr))
+			return null;
+		for (int i = Math.Clamp(filterIdx, 0, 2); i >= 0; i--)
+		{
+			if (arr[i] != null)
+				return arr[i];
+		}
+		return arr[2] ?? arr[1];
 	}
 
 	private void SeedVanillaProgressionFloors(BossCatalog catalog)
@@ -435,22 +590,25 @@ public sealed class ProgressionGraph
 		float qb = catalog.GetProgressionForNpc(NPCID.QueenBee, 4f);
 		float skel = catalog.GetProgressionForNpc(NPCID.SkeletronHead, 5f);
 		float wof = catalog.WallOfFleshProgression;
-		float mech = catalog.GetProgressionForNpc(NPCID.TheDestroyer, wof + 2f);
-		float prime = catalog.GetProgressionForNpc(NPCID.SkeletronPrime, wof + 3f);
-		float mechAll = Math.Max(mech, prime);
-		float plantera = catalog.GetProgressionForNpc(NPCID.Plantera, wof + 4f);
-		float cultist = catalog.GetProgressionForNpc(NPCID.CultistBoss, plantera + 3f);
+		float mech = catalog.GetMechAnyProgression();
+		float mechAll = catalog.GetMechAllProgression();
+		float twins = catalog.GetProgressionForNpc(NPCID.Retinazer, wof + 2f);
+		float dest = catalog.GetProgressionForNpc(NPCID.TheDestroyer, wof + 3f);
+		float prime = catalog.GetProgressionForNpc(NPCID.SkeletronPrime, wof + 4f);
+		float plantera = catalog.GetProgressionForNpc(NPCID.Plantera, wof + 5f);
+		float cultist = catalog.GetProgressionForNpc(NPCID.CultistBoss, plantera + 5f);
 		float ml = catalog.GetProgressionForNpc(NPCID.MoonLordCore, cultist + 1f);
 
-		_tileProgression[TileID.Hellforge] = Math.Max(evil + 0.05f, Math.Min(wof - 0.3f, evil + 0.3f));
-		_tileProgression[TileID.MythrilAnvil] = wof + 0.1f;
-		_tileProgression[TileID.AdamantiteForge] = wof + 0.1f;
-		_tileProgression[TileID.LihzahrdFurnace] = plantera + 0.1f;
-		_tileProgression[TileID.LunarCraftingStation] = cultist + 0.1f;
-		_tileProgression[TileID.Blendomatic] = wof + 0.2f;
-		_tileProgression[TileID.Autohammer] = plantera + 0.05f;
-		_tileProgression[TileID.CrystalBall] = wof + 0.05f;
-		_tileProgression[TileID.SteampunkBoiler] = mech + 0.1f;
+		SeedTileGateFloor(TileID.Hellforge, Math.Max(evil + 0.05f, Math.Min(wof - 0.3f, evil + 0.3f)), false, ObtainabilityDifficulty.Medium, LootLoc("UnderworldEarly"));
+		SeedTileGateFloor(TileID.AlchemyTable, skel + 0.01f, false, ObtainabilityDifficulty.Medium, LootLoc("WorkbenchCraft"));
+		SeedTileGateFloor(TileID.MythrilAnvil, wof + 0.1f, true, ObtainabilityDifficulty.Easy, LootLoc("WorkbenchCraft"));
+		SeedTileGateFloor(TileID.AdamantiteForge, wof + 0.1f, true, ObtainabilityDifficulty.Easy, LootLoc("WorkbenchCraft"));
+		SeedTileGateFloor(TileID.LihzahrdFurnace, plantera + 0.1f, true, ObtainabilityDifficulty.Easy, LootLoc("WorkbenchCraft"));
+		SeedTileGateFloor(TileID.LunarCraftingStation, cultist + 0.1f, true, ObtainabilityDifficulty.Easy, LootLoc("WorkbenchCraft"));
+		SeedTileGateFloor(TileID.Blendomatic, wof + 0.2f, true, ObtainabilityDifficulty.Easy, LootLoc("WorkbenchCraft"));
+		SeedTileGateFloor(TileID.Autohammer, plantera + 0.05f, true, ObtainabilityDifficulty.Easy, LootLoc("WorkbenchCraft"));
+		SeedTileGateFloor(TileID.CrystalBall, wof + 0.05f, true, ObtainabilityDifficulty.Easy, LootLoc("WorkbenchCraft"));
+		SeedTileGateFloor(TileID.SteampunkBoiler, mech + 0.1f, true, ObtainabilityDifficulty.Easy, LootLoc("WorkbenchCraft"));
 
 		// Pre-Evil / early biome gates so Obsidian, Shadow, Jungle, Fossil, and Hellstone do not leak before King Slime
 		float jungleFloor = ks + 0.05f;
@@ -486,8 +644,9 @@ public sealed class ProgressionGraph
 		_minimumItemFloor[ItemID.HellstoneBar] = evil + 0.05f;
 		_minimumItemFloor[ItemID.BeeWax] = qb + 0.01f;
 		_minimumItemFloor[ItemID.IllegalGunParts] = Math.Max(ks + 0.5f, 1.5f);
+		_minimumItemFloor[ItemID.Cascade] = skel + 0.01f;
 
-		// Hard biome/progression item floors so modded bags/mobs never pull Dungeon, Hellstone, or Hardmode ores early
+		// Hard biome/progression item floors so modded bags/mobs never pull Dungeon, Hellstone, or Hardmode materials early
 		float dungeonFloor = skel + 0.01f;
 		foreach (int id in new[]
 		{
@@ -500,7 +659,14 @@ public sealed class ProgressionGraph
 			_minimumItemFloor[id] = dungeonFloor;
 
 		float hm1 = wof + 0.05f;
-		foreach (int id in new[] { ItemID.CobaltOre, ItemID.CobaltBar, ItemID.PalladiumOre, ItemID.PalladiumBar })
+		foreach (int id in new[]
+		{
+			ItemID.CobaltOre, ItemID.CobaltBar, ItemID.PalladiumOre, ItemID.PalladiumBar,
+			ItemID.CrystalShard, ItemID.SoulofLight, ItemID.SoulofNight, ItemID.SoulofFlight,
+			ItemID.CursedFlame, ItemID.Ichor, ItemID.PixieDust, ItemID.UnicornHorn,
+			ItemID.LightShard, ItemID.DarkShard, ItemID.LivingFireBlock, ItemID.PirateMap,
+			ItemID.Amarok, ItemID.HelFire
+		})
 			_minimumItemFloor[id] = hm1;
 
 		float hm2 = wof + 0.10f;
@@ -512,12 +678,18 @@ public sealed class ProgressionGraph
 			_minimumItemFloor[id] = hm3;
 
 		_minimumItemFloor[ItemID.HallowedBar] = mech + 0.01f;
+		_minimumItemFloor[ItemID.SoulofSight] = twins + 0.01f;
+		_minimumItemFloor[ItemID.SoulofMight] = dest + 0.01f;
+		_minimumItemFloor[ItemID.SoulofFright] = prime + 0.01f;
 		_minimumItemFloor[ItemID.ChlorophyteOre] = mechAll + 0.05f;
 		_minimumItemFloor[ItemID.ChlorophyteBar] = mechAll + 0.05f;
 		_minimumItemFloor[ItemID.ShroomiteBar] = plantera + 0.05f;
 		_minimumItemFloor[ItemID.SpectreBar] = plantera + 0.05f;
 		_minimumItemFloor[ItemID.LunarOre] = ml + 0.01f;
 		_minimumItemFloor[ItemID.LunarBar] = ml + 0.01f;
+		_minimumItemFloor[ItemID.Clentaminator2] = ml + 0.01f;
+		_minimumItemFloor[ItemID.RodOfHarmony] = ml + 0.01f;
+		_minimumItemFloor[ItemID.BottomlessShimmerBucket] = ml + 0.01f;
 	}
 
 	private float ApplyMinimumFloor(int itemId, float candidateStage)
@@ -538,16 +710,50 @@ public sealed class ProgressionGraph
 		float boc = catalog.GetProgressionForNpc(NPCID.BrainofCthulhu, eow);
 		float evil = Math.Min(eow, boc);
 
+		// Basic Pre-Hardmode ores & gems are always gatherable early even if rare fishing crates or late shops also list them
+		int[] earlyOresAndGems =
+		{
+			ItemID.CopperOre, ItemID.TinOre, ItemID.IronOre, ItemID.LeadOre,
+			ItemID.SilverOre, ItemID.TungstenOre, ItemID.GoldOre, ItemID.PlatinumOre,
+			ItemID.Amethyst, ItemID.Topaz, ItemID.Sapphire, ItemID.Emerald, ItemID.Ruby, ItemID.Diamond
+		};
+		for (int i = 0; i < earlyOresAndGems.Length; i++)
+		{
+			TryRegisterSource(earlyOresAndGems[i], 0f, ItemSourceType.WorldTier, SourceConfidence.Verified,
+				LootLoc("SourceWorld"), false, default, ObtainabilityDifficulty.Easy, LootLoc("WorldGather"), 1f);
+		}
+
+		TryRegisterSource(ItemID.Amber, 0.5f, ItemSourceType.WorldTier, SourceConfidence.Verified,
+			LootLoc("SourceWorld"), false, default, ObtainabilityDifficulty.Medium, LootLoc("WorldGather"), 1f);
+
+		// Common surface / underground / ice / jungle chest staples also appear at low % in crates (which would otherwise mask Comfortable paths)
+		(int itemId, float stage)[] worldChestStaples =
+		{
+			(ItemID.Aglet, 0.3f),
+			(ItemID.HermesBoots, 0.8f),
+			(ItemID.CloudinaBottle, 0.8f),
+			(ItemID.BandofRegeneration, 0.8f),
+			(ItemID.FlurryBoots, 1.0f),
+			(ItemID.BlizzardinaBottle, 1.0f),
+			(ItemID.IceSkates, 1.0f),
+			(ItemID.AnkletoftheWind, 1.2f)
+		};
+		foreach ((int itemId, float stage) in worldChestStaples)
+		{
+			TryRegisterSource(itemId, stage, ItemSourceType.WorldTier, SourceConfidence.Verified,
+				LootLoc("SourceWorld"), false, default, ObtainabilityDifficulty.Medium, LootLoc("WorldChest"), 1f);
+		}
+
 		// Post-evil-boss biome ores can always be mined cleanly even if an enemy (e.g. Meteor Head 2%) also drops them rarely
 		TryRegisterSource(ItemID.Meteorite, evil + 0.01f, ItemSourceType.WorldTier, SourceConfidence.Verified,
-			"Meteorite biome (after EoW / BoC)", false, default, ObtainabilityDifficulty.Medium, LootLoc("MeteorBiome"), 1f);
+			LootLoc("SourceMeteor"), false, default, ObtainabilityDifficulty.Medium, LootLoc("MeteorBiome"), 1f);
 		TryRegisterSource(ItemID.Hellstone, evil + 0.05f, ItemSourceType.WorldTier, SourceConfidence.Verified,
-			"Underworld mining (after EoW / BoC)", false, default, ObtainabilityDifficulty.Medium, LootLoc("UnderworldEarly"), 1f);
+			LootLoc("SourceUnderworld"), false, default, ObtainabilityDifficulty.Medium, LootLoc("UnderworldEarly"), 1f);
 	}
 
 	private void SeedUncraftedWorldMaterials(BossCatalog catalog)
 	{
-		// Pre-seed raw world materials (no recipes, no NPC drops, no shops) with a conservative world-tier progression
+		// Pre-seed raw world materials (no recipes, no NPC drops, no shops, no bags) with a conservative world-tier progression
 		foreach (int itemId in _allValidItemIds)
 		{
 			ItemUnlockInfo info = Items[itemId];
@@ -579,59 +785,38 @@ public sealed class ProgressionGraph
 	{
 		Item item = ContentSamples.ItemsByType[itemId];
 		float est = ApplyMinimumFloor(itemId, EstimateRawWorldItemStage(item, catalog));
-		bool reqHm = est > _wofProg;
 
+		if (_openableBags.TryGetValue(itemId, out var bagDrops))
+		{
+			foreach ((DropRateInfo dr, ConditionGate gate) in bagDrops)
+			{
+				est = Math.Max(est, gate.MinProgression);
+				if (gate.MinProgression <= 0.01f && !gate.PreHardmodeOnly && ContentSamples.ItemsByType.TryGetValue(dr.itemId, out Item innerItem))
+					est = Math.Max(est, EstimateDropRarityFloor(innerItem, catalog));
+			}
+		}
+
+		bool reqHm = est > _wofProg;
 		bool isCombatOrEquip = item.damage > 0 || item.defense > 0 || item.accessory || item.headSlot >= 0 || item.bodySlot >= 0 || item.legSlot >= 0;
 		ObtainabilityDifficulty diff = isCombatOrEquip && item.rare >= ItemRarityID.Blue
 			? ObtainabilityDifficulty.Medium
 			: ObtainabilityDifficulty.Easy;
+		if (_openableBags.ContainsKey(itemId) && diff < ObtainabilityDifficulty.Medium)
+			diff = ObtainabilityDifficulty.Medium;
 		string reason = isCombatOrEquip ? LootLoc("WorldChest") : LootLoc("WorldGather");
 		(diff, reason) = ApplyMaterialDifficulty(itemId, diff, reason);
 
 		TryRegisterSource(itemId, est, ItemSourceType.WorldTier, SourceConfidence.TierEstimated,
-			"World / Chest / Mining", reqHm, default, diff, reason, 1f);
+			LootLoc("SourceWorld"), reqHm, default, diff, reason, 1f);
 	}
 
 	private void RunRelaxationPasses(BossCatalog catalog, int maxPasses)
 	{
-		// Map tile-placing items so modded crafting stations pass their unlock progression down to recipes
-		var tilePlacers = new Dictionary<int, List<int>>();
-		foreach (int itemId in _allValidItemIds)
-		{
-			Item item = ContentSamples.ItemsByType[itemId];
-			if (item.createTile >= TileID.Dirt)
-			{
-				if (!tilePlacers.TryGetValue(item.createTile, out List<int> list))
-				{
-					list = new List<int>();
-					tilePlacers[item.createTile] = list;
-				}
-				list.Add(itemId);
-			}
-		}
-
-		// Fixed-point relaxation across all three DifficultyFilterMode budgets
 		for (int pass = 0; pass < maxPasses; pass++)
 		{
 			bool changed = false;
 
-			foreach ((int tileId, List<int> placers) in tilePlacers)
-			{
-				if (_tileProgression.ContainsKey(tileId))
-					continue;
-
-				float bestPlacer = float.MaxValue;
-				foreach (int placerId in placers)
-				{
-					ItemUnlockPath pPath = Items.TryGetValue(placerId, out ItemUnlockInfo pInfo)
-						? pInfo.GetPathFor(DifficultyFilterMode.Comfortable) ?? pInfo.GetPathFor(DifficultyFilterMode.All)
-						: null;
-					if (pPath != null)
-						bestPlacer = Math.Min(bestPlacer, pPath.UnlockProgression);
-				}
-				if (bestPlacer < float.MaxValue && bestPlacer > 0.5f)
-					_tileProgression[tileId] = bestPlacer;
-			}
+			UpdateTileGates(catalog);
 
 			for (int i = 0; i < Recipe.numRecipes; i++)
 			{
@@ -643,22 +828,15 @@ public sealed class ProgressionGraph
 				if (!Items.TryGetValue(outId, out ItemUnlockInfo outInfo))
 					continue;
 
-				ConditionGate gate = ConditionProgressionMapper.EvaluateRecipeConditions(r.Conditions, catalog);
-				if (gate.Unobtainable)
+				ConditionGate recipeGate = ConditionProgressionMapper.EvaluateRecipeConditions(r.Conditions, catalog);
+				if (recipeGate.Unobtainable)
 					continue;
 
-				float craftFloor = gate.MinProgression;
-				foreach (int tileId in r.requiredTile)
-				{
-					if (_tileProgression.TryGetValue(tileId, out float tileProg))
-						craftFloor = Math.Max(craftFloor, tileProg);
-				}
-
-				// Custom quest/dialogue/mod conditions (e.g. ForgedByCalavia / RepairedByFallen) must not leak high-tier gear at stage 0
-				if (gate.HasSpecialCondition && gate.MinProgression <= 0.01f)
+				float craftFloor = recipeGate.MinProgression;
+				if (recipeGate.HasSpecialCondition && recipeGate.MinProgression <= 0.01f)
 					craftFloor = Math.Max(craftFloor, EstimateDropRarityFloor(r.createItem, catalog));
 
-				if ((r.createItem.damage > 0 || r.createItem.defense > 0) && r.createItem.rare >= ItemRarityID.LightRed)
+				if ((r.createItem.damage > 0 || r.createItem.defense > 0) && r.createItem.rare >= ItemRarityID.LightRed && !recipeGate.PreHardmodeOnly)
 					craftFloor = Math.Max(craftFloor, catalog.WallOfFleshProgression + 0.05f);
 
 				for (int filterIdx = 0; filterIdx < 3; filterIdx++)
@@ -666,17 +844,42 @@ public sealed class ProgressionGraph
 					var filterMode = (DifficultyFilterMode)filterIdx;
 					float recipeStage = craftFloor;
 					bool allKnown = true;
-					bool anyHardmode = gate.RequiresHardmode;
+					bool anyHardmode = recipeGate.RequiresHardmode;
 					bool anyTierEstimated = false;
-					ObtainabilityDifficulty maxDiff = ObtainabilityDifficulty.Easy;
-					string hardReason = LootLoc("WorkbenchCraft");
+					ConditionGate combinedGate = recipeGate;
+					ObtainabilityDifficulty maxDiff = recipeGate.IsSeasonal ? ObtainabilityDifficulty.Hard : ObtainabilityDifficulty.Easy;
+					string hardReason = recipeGate.IsSeasonal ? LootLoc("SeasonalDrop") : LootLoc("WorkbenchCraft");
+
+					foreach (int tileId in r.requiredTile)
+					{
+						TileGateInfo tg = GetTileGate(tileId, filterIdx);
+						if (tg == null)
+							continue;
+
+						recipeStage = Math.Max(recipeStage, tg.Prog);
+						anyHardmode |= tg.RequiresHardmode;
+						combinedGate = CombineAndGates(combinedGate, tg.Gate, out bool tileImpossible);
+						if (tileImpossible)
+						{
+							allKnown = false;
+							break;
+						}
+						if (tg.Difficulty > maxDiff)
+						{
+							maxDiff = tg.Difficulty;
+							hardReason = !string.IsNullOrWhiteSpace(tg.Reason) ? tg.Reason : LootLoc("WorkbenchCraft");
+						}
+					}
+
+					if (!allKnown)
+						continue;
 
 					foreach (Item req in r.requiredItem)
 					{
 						if (req == null || req.IsAir)
 							continue;
 
-						(float ingProg, bool ingHm, bool ingEst, ObtainabilityDifficulty ingDiff, string ingReason) =
+						(float ingProg, bool ingHm, bool ingEst, ConditionGate ingGate, ObtainabilityDifficulty ingDiff, string ingReason) =
 							ResolveIngredientProgression(r, req.type, filterMode);
 						if (ingProg >= float.MaxValue * 0.5f)
 						{
@@ -686,6 +889,12 @@ public sealed class ProgressionGraph
 						recipeStage = Math.Max(recipeStage, ingProg);
 						anyHardmode |= ingHm;
 						anyTierEstimated |= ingEst;
+						combinedGate = CombineAndGates(combinedGate, ingGate, out bool ingImpossible);
+						if (ingImpossible)
+						{
+							allKnown = false;
+							break;
+						}
 						if (ingDiff > maxDiff)
 						{
 							maxDiff = ingDiff;
@@ -696,11 +905,11 @@ public sealed class ProgressionGraph
 					if (!allKnown)
 						continue;
 
-					if (gate.HasSpecialCondition && maxDiff < ObtainabilityDifficulty.Hard)
+					if (combinedGate.HasSpecialCondition && maxDiff < ObtainabilityDifficulty.Hard)
 					{
 						maxDiff = ObtainabilityDifficulty.Hard;
-						hardReason = !string.IsNullOrWhiteSpace(gate.SpecialConditionText)
-							? gate.SpecialConditionText
+						hardReason = !string.IsNullOrWhiteSpace(combinedGate.SpecialConditionText)
+							? combinedGate.SpecialConditionText
 							: LootLoc("SpecialCondition");
 					}
 
@@ -710,95 +919,201 @@ public sealed class ProgressionGraph
 						continue;
 
 					SourceConfidence conf = anyTierEstimated ? SourceConfidence.TierEstimated : SourceConfidence.Crafted;
-					bool reqHm = anyHardmode || recipeStage > catalog.WallOfFleshProgression;
+					bool reqHm = !combinedGate.PreHardmodeOnly && (anyHardmode || recipeStage > catalog.WallOfFleshProgression);
 					if (RegisterPathIntoBucket(outInfo, filterIdx, recipeStage, ItemSourceType.Recipe, conf,
-						FormatRecipeSummary(r), reqHm, gate, maxDiff, hardReason, 1f))
+						FormatRecipeSummary(r), reqHm, combinedGate, maxDiff, hardReason, 1f))
 					{
 						changed = true;
 					}
 				}
 			}
 
-			// Propagate openable bags/crates/caches once the bag item itself is reachable
-			foreach ((int bagId, var drops) in _openableBags)
-			{
-				if (!Items.TryGetValue(bagId, out ItemUnlockInfo bagInfo))
-					continue;
+			if (PropagateOpenableBags(catalog))
+				changed = true;
 
-				string bagName = Lang.GetItemNameValue(bagId);
-				for (int filterIdx = 0; filterIdx < 3; filterIdx++)
-				{
-					ItemUnlockPath bagPath = bagInfo.PathsByFilter[filterIdx];
-					if (bagPath == null || bagPath.UnlockProgression >= float.MaxValue * 0.5f)
-						continue;
-
-					var filterMode = (DifficultyFilterMode)filterIdx;
-					foreach ((DropRateInfo dr, ConditionGate gate) in drops)
-					{
-						if (!Items.TryGetValue(dr.itemId, out ItemUnlockInfo dstInfo))
-							continue;
-
-						float stage = ApplyMinimumFloor(dr.itemId, Math.Max(bagPath.UnlockProgression + 0.001f, gate.MinProgression));
-						if (gate.MinProgression <= 0.01f && !bagPath.RequiresHardmode && ContentSamples.ItemsByType.TryGetValue(dr.itemId, out Item dropItem))
-							stage = Math.Max(stage, EstimateDropRarityFloor(dropItem, catalog));
-
-						(ObtainabilityDifficulty dropDiff, string dropReason) = EvaluateDropDifficulty(dr.dropRate, isBossDrop: false);
-						ObtainabilityDifficulty combDiff = bagPath.Difficulty > dropDiff ? bagPath.Difficulty : dropDiff;
-						string combReason = bagPath.Difficulty >= dropDiff && !string.IsNullOrEmpty(bagPath.DifficultyReason)
-							? bagPath.DifficultyReason
-							: $"{bagName}: {dropReason}";
-						(combDiff, combReason) = ApplyMaterialDifficulty(dr.itemId, combDiff, combReason);
-
-						if (!IsAllowedForFilter(combDiff, filterMode))
-							continue;
-
-						bool reqHm = bagPath.RequiresHardmode || gate.RequiresHardmode || stage > catalog.WallOfFleshProgression;
-						SourceConfidence conf = bagPath.Confidence == SourceConfidence.TierEstimated ? SourceConfidence.TierEstimated : SourceConfidence.Verified;
-						if (RegisterPathIntoBucket(dstInfo, filterIdx, stage, ItemSourceType.BagOrCrate, conf,
-							$"Inside {bagName}", reqHm, gate, combDiff, combReason, dr.dropRate))
-						{
-							changed = true;
-						}
-					}
-				}
-			}
-
-			// Propagate Shimmer transforms (Shimmer is at least Difficulty.Hard -> only buckets IncludeHard and All)
-			foreach (int itemId in _allValidItemIds)
-			{
-				if (itemId >= ItemID.Sets.ShimmerTransformToItem.Length)
-					continue;
-
-				int shimmerOut = ItemID.Sets.ShimmerTransformToItem[itemId];
-				if (shimmerOut <= 0 || !Items.TryGetValue(itemId, out ItemUnlockInfo srcInfo) || !Items.TryGetValue(shimmerOut, out ItemUnlockInfo dstInfo))
-					continue;
-
-				for (int filterIdx = 1; filterIdx < 3; filterIdx++)
-				{
-					ItemUnlockPath srcPath = srcInfo.PathsByFilter[filterIdx];
-					if (srcPath == null || srcPath.UnlockProgression >= float.MaxValue * 0.5f)
-						continue;
-
-					if (!srcPath.RequiresHardmode && ContentSamples.ItemsByType.TryGetValue(shimmerOut, out Item shOutItem) && shOutItem.rare >= ItemRarityID.LightRed)
-						continue;
-
-					float shStage = ApplyMinimumFloor(shimmerOut, Math.Max(srcPath.UnlockProgression, 1.05f));
-					ObtainabilityDifficulty shDiff = srcPath.Difficulty > ObtainabilityDifficulty.Hard ? srcPath.Difficulty : ObtainabilityDifficulty.Hard;
-					if (!IsAllowedForFilter(shDiff, (DifficultyFilterMode)filterIdx))
-						continue;
-
-					if (RegisterPathIntoBucket(dstInfo, filterIdx, shStage, ItemSourceType.Shimmer, srcPath.Confidence,
-						$"Shimmer: {Lang.GetItemNameValue(itemId)}", srcPath.RequiresHardmode || shStage > _wofProg,
-						default, shDiff, LootLoc("ShimmerTransform"), 1f))
-					{
-						changed = true;
-					}
-				}
-			}
+			if (PropagateShimmerTransforms(catalog))
+				changed = true;
 
 			if (!changed)
 				break;
 		}
+	}
+
+	private void UpdateTileGates(BossCatalog catalog)
+	{
+		foreach ((int tileId, List<int> placers) in _tilePlacers)
+		{
+			if (!_tileGates.TryGetValue(tileId, out TileGateInfo[] arr))
+			{
+				arr = new TileGateInfo[3];
+				_tileGates[tileId] = arr;
+			}
+
+			for (int filterIdx = 0; filterIdx < 3; filterIdx++)
+			{
+				var mode = (DifficultyFilterMode)filterIdx;
+				ItemUnlockPath bestPath = null;
+				foreach (int placerId in placers)
+				{
+					if (!Items.TryGetValue(placerId, out ItemUnlockInfo pInfo))
+						continue;
+
+					ItemUnlockPath pPath = pInfo.GetPathFor(mode);
+					if (pPath == null || pPath.UnlockProgression >= float.MaxValue * 0.5f)
+						continue;
+
+					if (bestPath == null
+						|| pPath.UnlockProgression + 0.001f < bestPath.UnlockProgression
+						|| (Math.Abs(pPath.UnlockProgression - bestPath.UnlockProgression) <= 0.02f && pPath.Difficulty < bestPath.Difficulty))
+					{
+						bestPath = pPath;
+					}
+				}
+
+				if (bestPath == null)
+					continue;
+
+				var candidate = new TileGateInfo(
+					bestPath.UnlockProgression,
+					bestPath.RequiresHardmode,
+					GateFromPath(bestPath),
+					bestPath.Difficulty,
+					bestPath.DifficultyReason);
+
+				TileGateInfo cur = arr[filterIdx];
+				if (cur == null
+					|| candidate.Prog + 0.001f < cur.Prog
+					|| (Math.Abs(candidate.Prog - cur.Prog) <= 0.02f && candidate.Difficulty < cur.Difficulty))
+				{
+					arr[filterIdx] = candidate;
+				}
+			}
+		}
+	}
+
+	private bool PropagateOpenableBags(BossCatalog catalog)
+	{
+		bool changed = false;
+		foreach ((int bagId, var drops) in _openableBags)
+		{
+			if (!Items.TryGetValue(bagId, out ItemUnlockInfo bagInfo))
+				continue;
+
+			string bagName = Lang.GetItemNameValue(bagId);
+			for (int filterIdx = 0; filterIdx < 3; filterIdx++)
+			{
+				ItemUnlockPath bagPath = bagInfo.PathsByFilter[filterIdx];
+				if (bagPath == null || bagPath.UnlockProgression >= float.MaxValue * 0.5f)
+					continue;
+
+				ConditionGate bagGate = GateFromPath(bagPath);
+				var filterMode = (DifficultyFilterMode)filterIdx;
+
+				foreach ((DropRateInfo dr, ConditionGate dropGate) in drops)
+				{
+					if (!Items.TryGetValue(dr.itemId, out ItemUnlockInfo dstInfo))
+						continue;
+
+					ConditionGate combined = CombineAndGates(bagGate, dropGate, out bool impossible);
+					if (impossible)
+						continue;
+
+					float stage = ApplyMinimumFloor(dr.itemId, Math.Max(bagPath.UnlockProgression + 0.001f, dropGate.MinProgression));
+					if (dropGate.MinProgression <= 0.01f && !bagPath.RequiresHardmode && !combined.PreHardmodeOnly
+						&& ContentSamples.ItemsByType.TryGetValue(dr.itemId, out Item dropItem))
+					{
+						stage = Math.Max(stage, EstimateDropRarityFloor(dropItem, catalog));
+					}
+
+					(ObtainabilityDifficulty dropDiff, string dropReason) = EvaluateDropDifficulty(dr.dropRate, isBossDrop: false);
+					if (combined.IsSeasonal && dropDiff < ObtainabilityDifficulty.Hard)
+					{
+						dropDiff = ObtainabilityDifficulty.Hard;
+						dropReason = LootLoc("SeasonalDrop");
+					}
+
+					ObtainabilityDifficulty combDiff = bagPath.Difficulty > dropDiff ? bagPath.Difficulty : dropDiff;
+					string combReason = bagPath.Difficulty >= dropDiff && !string.IsNullOrEmpty(bagPath.DifficultyReason)
+						? bagPath.DifficultyReason
+						: $"{bagName}: {dropReason}";
+					(combDiff, combReason) = ApplyMaterialDifficulty(dr.itemId, combDiff, combReason);
+
+					if (!IsAllowedForFilter(combDiff, filterMode))
+						continue;
+
+					bool reqHm = !combined.PreHardmodeOnly && (bagPath.RequiresHardmode || combined.RequiresHardmode || stage > catalog.WallOfFleshProgression);
+					SourceConfidence conf = bagPath.Confidence == SourceConfidence.TierEstimated ? SourceConfidence.TierEstimated : SourceConfidence.Verified;
+					if (RegisterPathIntoBucket(dstInfo, filterIdx, stage, ItemSourceType.BagOrCrate, conf,
+						LootLoc("SourceInsideBag", bagName), reqHm, combined, combDiff, combReason, dr.dropRate))
+					{
+						changed = true;
+					}
+				}
+			}
+		}
+		return changed;
+	}
+
+	private bool PropagateShimmerTransforms(BossCatalog catalog)
+	{
+		bool changed = false;
+		float ml = catalog.GetProgressionForNpc(NPCID.MoonLordCore, 18f);
+
+		foreach (int itemId in _allValidItemIds)
+		{
+			if (itemId < ItemID.Sets.ShimmerTransformToItem.Length)
+			{
+				int shimmerOut = ItemID.Sets.ShimmerTransformToItem[itemId];
+				if (shimmerOut > 0 && TryPropagateSingleShimmer(itemId, shimmerOut, 1.05f, forceHardmode: false, LootLoc("SourceShimmer", Lang.GetItemNameValue(itemId))))
+					changed = true;
+			}
+		}
+
+		// Vanilla hardcoded Moon-Lord-gated Item.GetShimmered() transforms (not in ShimmerTransformToItem)
+		foreach ((int srcId, int dstId) in new (int, int)[]
+		{
+			(ItemID.RodofDiscord, ItemID.RodOfHarmony),
+			(ItemID.Clentaminator, ItemID.Clentaminator2),
+			(ItemID.BottomlessBucket, ItemID.BottomlessShimmerBucket),
+			(ItemID.BottomlessShimmerBucket, ItemID.BottomlessBucket)
+		})
+		{
+			if (TryPropagateSingleShimmer(srcId, dstId, ml + 0.01f, forceHardmode: true, LootLoc("SourceShimmerML", Lang.GetItemNameValue(srcId))))
+				changed = true;
+		}
+
+		return changed;
+	}
+
+	private bool TryPropagateSingleShimmer(int srcId, int dstId, float minStage, bool forceHardmode, string summary)
+	{
+		if (!Items.TryGetValue(srcId, out ItemUnlockInfo srcInfo) || !Items.TryGetValue(dstId, out ItemUnlockInfo dstInfo))
+			return false;
+
+		bool changed = false;
+		for (int filterIdx = 1; filterIdx < 3; filterIdx++)
+		{
+			ItemUnlockPath srcPath = srcInfo.PathsByFilter[filterIdx];
+			if (srcPath == null || srcPath.UnlockProgression >= float.MaxValue * 0.5f)
+				continue;
+
+			if (!forceHardmode && !srcPath.RequiresHardmode && ContentSamples.ItemsByType.TryGetValue(dstId, out Item shOutItem) && shOutItem.rare >= ItemRarityID.LightRed)
+				continue;
+
+			float shStage = ApplyMinimumFloor(dstId, Math.Max(srcPath.UnlockProgression, minStage));
+			ObtainabilityDifficulty shDiff = srcPath.Difficulty > ObtainabilityDifficulty.Hard ? srcPath.Difficulty : ObtainabilityDifficulty.Hard;
+			if (!IsAllowedForFilter(shDiff, (DifficultyFilterMode)filterIdx))
+				continue;
+
+			ConditionGate gate = GateFromPath(srcPath);
+			bool reqHm = forceHardmode || srcPath.RequiresHardmode || (!gate.PreHardmodeOnly && shStage > _wofProg);
+			if (RegisterPathIntoBucket(dstInfo, filterIdx, shStage, ItemSourceType.Shimmer, srcPath.Confidence,
+				summary, reqHm, gate, shDiff, LootLoc("ShimmerTransform"), 1f))
+			{
+				changed = true;
+			}
+		}
+		return changed;
 	}
 
 	private void ApplyFallbackTierEstimates(BossCatalog catalog)
@@ -816,11 +1131,11 @@ public sealed class ProgressionGraph
 				itemId, ObtainabilityDifficulty.Medium, LootLoc("TierEstimate"));
 
 			TryRegisterSource(itemId, est, ItemSourceType.EstimatedTier, SourceConfidence.TierEstimated,
-				"Estimated from rarity/stats (source hidden in mod code)", reqHm, default, diff, reason, 1f);
+				LootLoc("SourceTierEstimate"), reqHm, default, diff, reason, 1f);
 		}
 	}
 
-	private (float Prog, bool Hardmode, bool Estimated, ObtainabilityDifficulty Diff, string Reason) ResolveIngredientProgression(
+	private (float Prog, bool Hardmode, bool Estimated, ConditionGate Gate, ObtainabilityDifficulty Diff, string Reason) ResolveIngredientProgression(
 		Recipe recipe, int reqType, DifficultyFilterMode filterMode)
 	{
 		if (recipe.acceptedGroups != null)
@@ -835,8 +1150,10 @@ public sealed class ProgressionGraph
 					float minGroup = float.MaxValue;
 					bool hm = false;
 					bool est = false;
+					ConditionGate groupGate = default;
 					ObtainabilityDifficulty bestDiff = ObtainabilityDifficulty.VeryHard;
 					string bestReason = string.Empty;
+					bool foundWorldCompat = false;
 
 					foreach (int validId in group.ValidItems)
 					{
@@ -844,17 +1161,33 @@ public sealed class ProgressionGraph
 							continue;
 
 						ItemUnlockPath path = gInfo.GetPathFor(filterMode);
-						if (path != null && (path.UnlockProgression < minGroup || (Math.Abs(path.UnlockProgression - minGroup) < 0.001f && path.Difficulty < bestDiff)))
+						if (path == null)
+							continue;
+
+						bool compat = Main.gameMenu || IsPathCompatibleWithActiveWorld(path);
+						if (!compat && foundWorldCompat)
+							continue;
+
+						bool takeFirstCompat = compat && !foundWorldCompat;
+						if (takeFirstCompat
+							|| path.UnlockProgression + 0.001f < minGroup
+							|| (Math.Abs(path.UnlockProgression - minGroup) <= 0.001f && path.Difficulty < bestDiff))
 						{
+							foundWorldCompat |= compat;
 							minGroup = path.UnlockProgression;
 							hm = path.RequiresHardmode;
 							est = path.Confidence == SourceConfidence.TierEstimated;
+							groupGate = GateFromPath(path);
 							bestDiff = path.Difficulty;
 							bestReason = path.DifficultyReason;
 						}
+						else if (Math.Abs(path.UnlockProgression - minGroup) <= 0.25f && path.RequiresHardmode == hm)
+						{
+							groupGate = CombineOrGates(groupGate, GateFromPath(path));
+						}
 					}
 					if (minGroup < float.MaxValue * 0.5f)
-						return (minGroup, hm, est, bestDiff, bestReason);
+						return (minGroup, hm, est, groupGate, bestDiff, bestReason);
 				}
 			}
 		}
@@ -863,10 +1196,92 @@ public sealed class ProgressionGraph
 		{
 			ItemUnlockPath path = info.GetPathFor(filterMode);
 			if (path != null)
-				return (path.UnlockProgression, path.RequiresHardmode, path.Confidence == SourceConfidence.TierEstimated, path.Difficulty, path.DifficultyReason);
+				return (path.UnlockProgression, path.RequiresHardmode, path.Confidence == SourceConfidence.TierEstimated, GateFromPath(path), path.Difficulty, path.DifficultyReason);
 		}
 
-		return (float.MaxValue, false, true, ObtainabilityDifficulty.VeryHard, string.Empty);
+		return (float.MaxValue, false, true, default, ObtainabilityDifficulty.VeryHard, string.Empty);
+	}
+
+	private static bool IsPathCompatibleWithActiveWorld(ItemUnlockPath path)
+	{
+		if (path.ExpertOnly && !Main.expertMode) return false;
+		if (path.MasterOnly && !Main.masterMode) return false;
+		if (path.ClassicOnly && Main.expertMode) return false;
+		if (!Main.drunkWorld)
+		{
+			if (path.CrimsonOnly && !WorldGen.crimson) return false;
+			if (path.CorruptOnly && WorldGen.crimson) return false;
+		}
+		return true;
+	}
+
+	private static ConditionGate GateFromPath(ItemUnlockPath p) => new ConditionGate
+	{
+		MinProgression = p.UnlockProgression,
+		RequiresHardmode = p.RequiresHardmode,
+		PreHardmodeOnly = p.PreHardmodeOnly,
+		ExpertOnly = p.ExpertOnly,
+		MasterOnly = p.MasterOnly,
+		ClassicOnly = p.ClassicOnly,
+		CrimsonOnly = p.CrimsonOnly,
+		CorruptOnly = p.CorruptOnly
+	};
+
+	private static ConditionGate CombineAndGates(ConditionGate a, ConditionGate b, out bool impossible)
+	{
+		bool expert = a.ExpertOnly || b.ExpertOnly;
+		bool master = a.MasterOnly || b.MasterOnly;
+		bool classic = a.ClassicOnly || b.ClassicOnly;
+		bool crimson = a.CrimsonOnly || b.CrimsonOnly;
+		bool corrupt = a.CorruptOnly || b.CorruptOnly;
+
+		impossible = (classic && (expert || master)) || (!Main.drunkWorld && crimson && corrupt);
+		if (impossible && Main.drunkWorld && crimson && corrupt)
+			crimson = corrupt = false;
+
+		return new ConditionGate
+		{
+			MinProgression = Math.Max(a.MinProgression, b.MinProgression),
+			RequiresHardmode = a.RequiresHardmode || b.RequiresHardmode,
+			PreHardmodeOnly = (a.PreHardmodeOnly || b.PreHardmodeOnly) && !(a.RequiresHardmode || b.RequiresHardmode),
+			ExpertOnly = expert,
+			MasterOnly = master,
+			ClassicOnly = classic,
+			CrimsonOnly = crimson,
+			CorruptOnly = corrupt,
+			Unobtainable = a.Unobtainable || b.Unobtainable || impossible,
+			IsChallengeCondition = a.IsChallengeCondition || b.IsChallengeCondition,
+			IsSeasonal = a.IsSeasonal || b.IsSeasonal,
+			HasSpecialCondition = a.HasSpecialCondition || b.HasSpecialCondition,
+			SpecialConditionText = !string.IsNullOrWhiteSpace(a.SpecialConditionText) ? a.SpecialConditionText : b.SpecialConditionText
+		};
+	}
+
+	private static ConditionGate CombineOrGates(ConditionGate a, ConditionGate b)
+	{
+		bool aClassic = !a.ExpertOnly && !a.MasterOnly;
+		bool aExpert = !a.ClassicOnly && !a.MasterOnly;
+		bool aMaster = !a.ClassicOnly;
+		bool bClassic = !b.ExpertOnly && !b.MasterOnly;
+		bool bExpert = !b.ClassicOnly && !b.MasterOnly;
+		bool bMaster = !b.ClassicOnly;
+
+		bool c = aClassic || bClassic;
+		bool e = aExpert || bExpert;
+		bool m = aMaster || bMaster;
+
+		bool allowCorrupt = !a.CrimsonOnly || !b.CrimsonOnly;
+		bool allowCrimson = !a.CorruptOnly || !b.CorruptOnly;
+
+		return a with
+		{
+			PreHardmodeOnly = a.PreHardmodeOnly && b.PreHardmodeOnly,
+			ClassicOnly = c && !e && !m,
+			ExpertOnly = !c && e,
+			MasterOnly = !c && !e && m,
+			CrimsonOnly = !allowCorrupt && allowCrimson,
+			CorruptOnly = allowCorrupt && !allowCrimson
+		};
 	}
 
 	private void TryRegisterSource(
@@ -886,7 +1301,7 @@ public sealed class ProgressionGraph
 
 		stage = ApplyMinimumFloor(itemId, stage);
 		(difficulty, difficultyReason) = ApplyMaterialDifficulty(itemId, difficulty, difficultyReason);
-		hardmode = hardmode || gate.RequiresHardmode || stage > _wofProg;
+		hardmode = !gate.PreHardmodeOnly && (hardmode || gate.RequiresHardmode || stage > _wofProg);
 
 		int minBucket = difficulty switch
 		{
@@ -913,17 +1328,26 @@ public sealed class ProgressionGraph
 		float dropChance)
 	{
 		ItemUnlockPath existing = info.PathsByFilter[bucketIdx];
+		bool effHm = !gate.PreHardmodeOnly && (hardmode || gate.RequiresHardmode);
+
+		if (existing != null && stage > existing.UnlockProgression + 0.0005f && !existing.RequiresHardmode && effHm)
+			return false;
+
 		bool better = existing == null
 			|| stage + 0.45f < existing.UnlockProgression
 			|| (stage + 0.0005f < existing.UnlockProgression && difficulty <= existing.Difficulty)
-			|| (Math.Abs(stage - existing.UnlockProgression) <= 0.45f && difficulty < existing.Difficulty)
-			|| (existing.SourceType == ItemSourceType.EstimatedTier && sourceType == ItemSourceType.Recipe);
-
-		if (!better)
-			return false;
+			|| (stage <= existing.UnlockProgression + 0.02f && effHm == existing.RequiresHardmode && difficulty < existing.Difficulty)
+			|| (existing.SourceType == ItemSourceType.EstimatedTier && sourceType == ItemSourceType.Recipe && stage <= existing.UnlockProgression + 0.5f && effHm == existing.RequiresHardmode);
 
 		ContentSamples.ItemsByType.TryGetValue(info.ItemType, out Item item);
-		info.PathsByFilter[bucketIdx] = new ItemUnlockPath
+		if (!better)
+		{
+			if (Math.Abs(stage - existing.UnlockProgression) <= 0.5f && effHm == existing.RequiresHardmode && difficulty <= existing.Difficulty)
+				return MergePathExclusivity(existing, gate, item);
+			return false;
+		}
+
+		var next = new ItemUnlockPath
 		{
 			UnlockProgression = stage,
 			SourceType = sourceType,
@@ -932,14 +1356,71 @@ public sealed class ProgressionGraph
 			Difficulty = difficulty,
 			DifficultyReason = difficultyReason ?? string.Empty,
 			BestDropChance = dropChance,
-			RequiresHardmode = hardmode || gate.RequiresHardmode,
+			RequiresHardmode = effHm,
+			PreHardmodeOnly = gate.PreHardmodeOnly && !effHm,
 			ExpertOnly = gate.ExpertOnly || (item?.expert ?? false),
 			MasterOnly = gate.MasterOnly || (item?.master ?? false),
 			ClassicOnly = gate.ClassicOnly,
 			CrimsonOnly = gate.CrimsonOnly,
 			CorruptOnly = gate.CorruptOnly
 		};
+
+		if (existing != null && Math.Abs(stage - existing.UnlockProgression) <= 0.5f && effHm == existing.RequiresHardmode)
+			MergePathExclusivity(next, GateFromPath(existing), item);
+
+		info.PathsByFilter[bucketIdx] = next;
 		return true;
+	}
+
+	private static bool MergePathExclusivity(ItemUnlockPath target, ConditionGate other, Item item)
+	{
+		bool changed = false;
+
+		if (item == null || (!item.expert && !item.master))
+		{
+			bool tClassic = !target.ExpertOnly && !target.MasterOnly;
+			bool tExpert = !target.ClassicOnly && !target.MasterOnly;
+			bool tMaster = !target.ClassicOnly;
+
+			bool oClassic = !other.ExpertOnly && !other.MasterOnly;
+			bool oExpert = !other.ClassicOnly && !other.MasterOnly;
+			bool oMaster = !other.ClassicOnly;
+
+			bool mClassic = tClassic || oClassic;
+			bool mExpert = tExpert || oExpert;
+			bool mMaster = tMaster || oMaster;
+
+			bool nextClassic = mClassic && !mExpert && !mMaster;
+			bool nextExpert = !mClassic && mExpert;
+			bool nextMaster = !mClassic && !mExpert && mMaster;
+
+			if (target.ClassicOnly != nextClassic || target.ExpertOnly != nextExpert || target.MasterOnly != nextMaster)
+			{
+				target.ClassicOnly = nextClassic;
+				target.ExpertOnly = nextExpert;
+				target.MasterOnly = nextMaster;
+				changed = true;
+			}
+		}
+
+		bool allowCorrupt = !target.CrimsonOnly || !other.CrimsonOnly;
+		bool allowCrimson = !target.CorruptOnly || !other.CorruptOnly;
+		bool nextCrimsonOnly = !allowCorrupt && allowCrimson;
+		bool nextCorruptOnly = allowCorrupt && !allowCrimson;
+		if (target.CrimsonOnly != nextCrimsonOnly || target.CorruptOnly != nextCorruptOnly)
+		{
+			target.CrimsonOnly = nextCrimsonOnly;
+			target.CorruptOnly = nextCorruptOnly;
+			changed = true;
+		}
+
+		if (target.PreHardmodeOnly && !other.PreHardmodeOnly)
+		{
+			target.PreHardmodeOnly = false;
+			changed = true;
+		}
+
+		return changed;
 	}
 
 	private static bool IsAllowedForFilter(ObtainabilityDifficulty difficulty, DifficultyFilterMode mode)
@@ -1011,8 +1492,8 @@ public sealed class ProgressionGraph
 		float evil = Math.Min(eow, boc);
 		float skel = catalog.GetProgressionForNpc(NPCID.SkeletronHead, 5f);
 		float wof = catalog.WallOfFleshProgression;
-		float mech = catalog.GetProgressionForNpc(NPCID.TheDestroyer, wof + 2f);
-		float plantera = catalog.GetProgressionForNpc(NPCID.Plantera, wof + 4f);
+		float mech = catalog.GetMechAnyProgression();
+		float plantera = catalog.GetProgressionForNpc(NPCID.Plantera, wof + 5f);
 
 		// Vanilla Boss Minions / Jungle / Desert / Dungeon / Underworld / Hardmode / Post-Plantera biome gates
 		switch (npc.type)
@@ -1065,6 +1546,7 @@ public sealed class ProgressionGraph
 			case NPCID.BigMimicCorruption:
 			case NPCID.BigMimicCrimson:
 			case NPCID.BigMimicHallow:
+			case NPCID.BigMimicJungle:
 			case NPCID.GoblinSummoner:
 			case NPCID.RuneWizard:
 			case NPCID.Mummy:
@@ -1073,12 +1555,50 @@ public sealed class ProgressionGraph
 			case NPCID.BloodMummy:
 			case NPCID.ArmoredSkeleton:
 			case NPCID.MossHornet:
+			case NPCID.AngryTrapper:
 			case NPCID.IchorSticker:
 			case NPCID.Clinger:
 			case NPCID.Corruptor:
+			case NPCID.CorruptSlime:
 			case NPCID.IlluminantBat:
+			case NPCID.IlluminantSlime:
 			case NPCID.ChaosElemental:
+			case NPCID.Pixie:
+			case NPCID.Unicorn:
+			case NPCID.SeekerHead:
+			case NPCID.FloatyGross:
+			case NPCID.Gastropod:
+			case NPCID.Herpling:
+			case NPCID.Derpling:
+			case NPCID.GiantTortoise:
+			case NPCID.GiantBat:
+			case NPCID.Moth:
+			case NPCID.CrimsonAxe:
+			case NPCID.EnchantedSword:
+			case NPCID.CursedHammer:
+			case NPCID.PigronCorruption:
+			case NPCID.PigronCrimson:
+			case NPCID.PigronHallow:
+			case NPCID.DesertGhoul:
+			case NPCID.DesertGhoulCorruption:
+			case NPCID.DesertGhoulCrimson:
+			case NPCID.DesertGhoulHallow:
+			case NPCID.SandShark:
+			case NPCID.SandsharkCorrupt:
+			case NPCID.SandsharkCrimson:
+			case NPCID.SandsharkHallow:
+			case NPCID.DuneSplicerHead:
 				return wof + 0.05f;
+
+			case NPCID.UndeadMiner:
+			case NPCID.Tim:
+			case NPCID.Pinky:
+			case NPCID.Nymph:
+			case NPCID.LostGirl:
+			case NPCID.DoctorBones:
+			case NPCID.Gnome:
+			case NPCID.GoldenSlime:
+				return Math.Min(ks + 0.2f, 1.2f);
 
 			case NPCID.Paladin:
 			case NPCID.BoneLee:
@@ -1086,13 +1606,15 @@ public sealed class ProgressionGraph
 			case NPCID.SkeletonSniper:
 			case NPCID.SkeletonCommando:
 			case NPCID.DungeonSpirit:
+			case NPCID.GiantCursedSkull:
 			case NPCID.Lihzahrd:
 			case NPCID.LihzahrdCrawler:
 			case NPCID.FlyingSnake:
 				return plantera + 0.05f;
 		}
 
-		if (npc.rarity >= 4 || npc.lifeMax >= 4000)
+		// Note: Pre-Hardmode Lifeform Analyzer spawns (Tim, Nymph, Pinky) have npc.rarity 3-4 with low lifeMax
+		if (npc.lifeMax >= 4000 || (npc.rarity >= 4 && npc.lifeMax >= 500))
 			return Math.Max(wof + 2.0f, mech);
 
 		if (npc.lifeMax >= 1200 || npc.damage >= 75)
@@ -1111,26 +1633,29 @@ public sealed class ProgressionGraph
 	{
 		float ks = catalog.GetProgressionForNpc(NPCID.KingSlime, 1f);
 		float eoc = catalog.GetProgressionForNpc(NPCID.EyeofCthulhu, 2f);
-		float evil = catalog.GetProgressionForNpc(NPCID.EaterofWorldsHead, 3f);
+		float evil = Math.Min(
+			catalog.GetProgressionForNpc(NPCID.EaterofWorldsHead, 3f),
+			catalog.GetProgressionForNpc(NPCID.BrainofCthulhu, 3f));
 		float qb = catalog.GetProgressionForNpc(NPCID.QueenBee, 4f);
 		float skel = catalog.GetProgressionForNpc(NPCID.SkeletronHead, 5f);
 		float wof = catalog.WallOfFleshProgression;
-		float mech = catalog.GetProgressionForNpc(NPCID.TheDestroyer, wof + 2f);
-		float plantera = catalog.GetProgressionForNpc(NPCID.Plantera, wof + 4f);
+		float mechAny = catalog.GetMechAnyProgression();
+		float plantera = catalog.GetProgressionForNpc(NPCID.Plantera, wof + 5f);
 		float golem = catalog.GetProgressionForNpc(NPCID.Golem, plantera + 1f);
 
 		return npcType switch
 		{
 			NPCID.ArmsDealer => Math.Max(ks + 0.5f, 1.5f),
-			NPCID.TravellingMerchant => Math.Max(ks + 0.2f, 1.2f),
+			NPCID.TravellingMerchant or NPCID.SkeletonMerchant => Math.Max(ks + 0.2f, 1.2f),
 			NPCID.Dryad => eoc + 0.01f,
 			NPCID.GoblinTinkerer or NPCID.DD2Bartender => Math.Max(eoc + 0.5f, evil - 0.3f),
 			NPCID.WitchDoctor => qb + 0.01f,
 			NPCID.Clothier or NPCID.Mechanic => skel + 0.01f,
 			NPCID.Wizard or NPCID.TaxCollector => wof + 0.05f,
 			NPCID.Truffle => wof + 0.1f,
+			NPCID.SantaClaus => wof + 0.35f,
 			NPCID.Pirate => wof + 0.5f,
-			NPCID.Steampunker or NPCID.SantaClaus => mech + 0.01f,
+			NPCID.Steampunker => mechAny + 0.01f,
 			NPCID.Cyborg => plantera + 0.01f,
 			NPCID.Princess => golem + 0.5f,
 			_ => 0.5f
@@ -1140,12 +1665,14 @@ public sealed class ProgressionGraph
 	private static float EstimateDropRarityFloor(Item item, BossCatalog catalog)
 	{
 		float eoc = catalog.GetProgressionForNpc(NPCID.EyeofCthulhu, 2f);
-		float evil = catalog.GetProgressionForNpc(NPCID.EaterofWorldsHead, 3f);
+		float evil = Math.Min(
+			catalog.GetProgressionForNpc(NPCID.EaterofWorldsHead, 3f),
+			catalog.GetProgressionForNpc(NPCID.BrainofCthulhu, 3f));
 		float wof = catalog.WallOfFleshProgression;
-		float mech = catalog.GetProgressionForNpc(NPCID.TheDestroyer, wof + 2f);
-		float plantera = catalog.GetProgressionForNpc(NPCID.Plantera, wof + 4f);
+		float mech = catalog.GetMechAnyProgression();
+		float plantera = catalog.GetProgressionForNpc(NPCID.Plantera, wof + 5f);
 		float golem = catalog.GetProgressionForNpc(NPCID.Golem, plantera + 1f);
-		float cultist = catalog.GetProgressionForNpc(NPCID.CultistBoss, golem + 2f);
+		float cultist = catalog.GetProgressionForNpc(NPCID.CultistBoss, golem + 4f);
 		float ml = catalog.GetProgressionForNpc(NPCID.MoonLordCore, cultist + 1f);
 
 		float floor = item.rare switch
@@ -1188,13 +1715,15 @@ public sealed class ProgressionGraph
 
 	private static float EstimateRawWorldItemStage(Item item, BossCatalog catalog)
 	{
-		float evil = catalog.GetProgressionForNpc(NPCID.EaterofWorldsHead, 3f);
+		float evil = Math.Min(
+			catalog.GetProgressionForNpc(NPCID.EaterofWorldsHead, 3f),
+			catalog.GetProgressionForNpc(NPCID.BrainofCthulhu, 3f));
 		float wof = catalog.WallOfFleshProgression;
 		float skel = catalog.GetProgressionForNpc(NPCID.SkeletronHead, 5f);
-		float mech = catalog.GetProgressionForNpc(NPCID.TheDestroyer, wof + 2f);
-		float plantera = catalog.GetProgressionForNpc(NPCID.Plantera, wof + 4f);
+		float mech = catalog.GetMechAnyProgression();
+		float plantera = catalog.GetProgressionForNpc(NPCID.Plantera, wof + 5f);
 		float golem = catalog.GetProgressionForNpc(NPCID.Golem, plantera + 1f);
-		float cultist = catalog.GetProgressionForNpc(NPCID.CultistBoss, golem + 2f);
+		float cultist = catalog.GetProgressionForNpc(NPCID.CultistBoss, golem + 4f);
 		float ml = catalog.GetProgressionForNpc(NPCID.MoonLordCore, cultist + 1f);
 
 		float byRare = item.rare switch
@@ -1212,6 +1741,13 @@ public sealed class ProgressionGraph
 			ItemRarityID.Red => cultist + 0.5f,
 			>= ItemRarityID.Purple => ml + 0.2f
 		};
+
+		if (item.rare < ItemRarityID.White)
+		{
+			if (item.value >= 500000) byRare = Math.Max(byRare, plantera);
+			else if (item.value >= 200000) byRare = Math.Max(byRare, mech);
+			else if (item.value >= 75000) byRare = Math.Max(byRare, wof + 0.2f);
+		}
 
 		// Guard against modded items with custom/high rare values or missing rarity
 		bool explicitPreHmRare = item.rare >= ItemRarityID.White && item.rare <= ItemRarityID.Orange;
@@ -1237,7 +1773,7 @@ public sealed class ProgressionGraph
 			.Take(4)
 			.Select(x => x.stack > 1 ? $"{x.Name} x{x.stack}" : x.Name);
 		string suffix = r.requiredItem.Count > 4 ? ", ..." : string.Empty;
-		string text = "Craft: " + string.Join(" + ", ings) + suffix;
+		string text = LootLoc("SourceCraft", string.Join(" + ", ings) + suffix);
 
 		if (r.Conditions != null && r.Conditions.Count > 0)
 		{

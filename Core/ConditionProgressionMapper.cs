@@ -19,6 +19,8 @@ public readonly struct ConditionGate
 	public bool CrimsonOnly { get; init; }
 	public bool CorruptOnly { get; init; }
 	public bool Unobtainable { get; init; }
+	public bool IsChallengeCondition { get; init; }
+	public bool IsSeasonal { get; init; }
 	public bool HasSpecialCondition { get; init; }
 	public string SpecialConditionText { get; init; }
 }
@@ -29,8 +31,11 @@ public readonly struct ConditionGate
 /// </summary>
 public static class ConditionProgressionMapper
 {
-	private static bool TryResolveKnownConditionKey(string key, BossCatalog catalog, out float progression)
+	private static bool TryResolveKnownConditionKey(string key, BossCatalog catalog, out float progression, out bool hardmodeOverride, out bool preHardmodeOverride)
 	{
+		hardmodeOverride = false;
+		preHardmodeOverride = false;
+
 		float wof = catalog?.WallOfFleshProgression ?? 7.0f;
 		float ks = catalog?.GetProgressionForNpc(NPCID.KingSlime, 1.0f) ?? 1.0f;
 		float eoc = catalog?.GetProgressionForNpc(NPCID.EyeofCthulhu, 2.0f) ?? 2.0f;
@@ -41,17 +46,25 @@ public static class ConditionProgressionMapper
 		float skel = catalog?.GetProgressionForNpc(NPCID.SkeletronHead, 5.0f) ?? 5.0f;
 		float deer = catalog?.GetProgressionForNpc(NPCID.Deerclops, 6.0f) ?? 6.0f;
 		float qs = catalog?.GetProgressionForNpc(NPCID.QueenSlimeBoss, wof + 1.0f) ?? (wof + 1.0f);
-		float dest = catalog?.GetProgressionForNpc(NPCID.TheDestroyer, wof + 2.0f) ?? (wof + 2.0f);
-		float twins = catalog?.GetProgressionForNpc(NPCID.Retinazer, wof + 2.5f) ?? (wof + 2.5f);
-		float prime = catalog?.GetProgressionForNpc(NPCID.SkeletronPrime, wof + 3.0f) ?? (wof + 3.0f);
-		float mechAny = Math.Min(dest, Math.Min(twins, prime));
-		float mechAll = Math.Max(dest, Math.Max(twins, prime));
-		float plantera = catalog?.GetProgressionForNpc(NPCID.Plantera, mechAll + 1.5f) ?? (mechAll + 1.5f);
+		float dest = catalog?.GetProgressionForNpc(NPCID.TheDestroyer, wof + 3.0f) ?? (wof + 3.0f);
+		float twins = catalog?.GetProgressionForNpc(NPCID.Retinazer, wof + 2.0f) ?? (wof + 2.0f);
+		float prime = catalog?.GetProgressionForNpc(NPCID.SkeletronPrime, wof + 4.0f) ?? (wof + 4.0f);
+		float mechAny = catalog?.GetMechAnyProgression() ?? Math.Min(dest, Math.Min(twins, prime));
+		float mechAll = catalog?.GetMechAllProgression() ?? Math.Max(dest, Math.Max(twins, prime));
+		float plantera = catalog?.GetProgressionForNpc(NPCID.Plantera, mechAll + 1.0f) ?? (mechAll + 1.0f);
 		float golem = catalog?.GetProgressionForNpc(NPCID.Golem, plantera + 1.0f) ?? (plantera + 1.0f);
-		float duke = catalog?.GetProgressionForNpc(NPCID.DukeFishron, golem + 0.5f) ?? (golem + 0.5f);
-		float empress = catalog?.GetProgressionForNpc(NPCID.HallowBoss, golem + 1.0f) ?? (golem + 1.0f);
-		float cultist = catalog?.GetProgressionForNpc(NPCID.CultistBoss, golem + 2.0f) ?? (golem + 2.0f);
+		float duke = catalog?.GetProgressionForNpc(NPCID.DukeFishron, golem + 1.0f) ?? (golem + 1.0f);
+		float empress = catalog?.GetProgressionForNpc(NPCID.HallowBoss, golem + 2.0f) ?? (golem + 2.0f);
+		float cultist = catalog?.GetProgressionForNpc(NPCID.CultistBoss, golem + 4.0f) ?? (golem + 4.0f);
 		float ml = catalog?.GetProgressionForNpc(NPCID.MoonLordCore, cultist + 1.0f) ?? (cultist + 1.0f);
+
+		if (key.StartsWith("Conditions.NotDowned", StringComparison.Ordinal)
+			|| key is "Conditions.NotBloodMoon" or "Conditions.NotSolarEclipse" or "Conditions.NotBloodOrSun"
+				or "Conditions.MoonPhasesHalf0OrPreHardmode")
+		{
+			progression = 0f;
+			return true;
+		}
 
 		progression = key switch
 		{
@@ -59,7 +72,8 @@ public static class ConditionProgressionMapper
 			"Conditions.DownedEyeOfCthulhu" or "Conditions.DownedEarlygameBoss" => eoc + 0.01f,
 			"Conditions.DownedGoblinArmy" => eoc + 0.5f,
 			"Conditions.SmashedShadowOrb" => eoc + 0.6f,
-			"Conditions.DownedBoss2" or "Conditions.DownedEaterOfWorlds" or "Conditions.DownedBrainOfCthulhu" => evil + 0.01f,
+			"Conditions.DownedBoss2" or "Conditions.DownedEaterOfWorlds" or "Conditions.DownedBrainOfCthulhu"
+				or "Conditions.DownedB2B3HM" => evil + 0.01f,
 			"Conditions.DownedQueenBee" => qb + 0.01f,
 			"Conditions.DownedSkeletron" or "Conditions.InDungeon" => skel + 0.01f,
 			"Conditions.DownedDeerclops" => deer + 0.01f,
@@ -76,9 +90,9 @@ public static class ConditionProgressionMapper
 			"Conditions.DownedOldOnesArmyT2" => mechAny + 0.01f,
 			"Conditions.DownedPlantera" or "Conditions.InLihzhardTemple" => plantera + 0.01f,
 			"Conditions.DownedGolem" or "Conditions.DownedOldOnesArmyT3" => golem + 0.01f,
-			"Conditions.DownedMartians" => golem + 0.2f,
+			"Conditions.DownedMartians" => golem + 0.76f,
 			"Conditions.DownedDukeFishron" => duke + 0.01f,
-			"Conditions.DownedMourningWood" or "Conditions.DownedPumpking" or "Conditions.DownedEverscream" or "Conditions.DownedSantaNK1" or "Conditions.DownedIceQueen" => plantera + 0.5f,
+			"Conditions.DownedMourningWood" or "Conditions.DownedPumpking" or "Conditions.DownedEverscream" or "Conditions.DownedSantaNK1" or "Conditions.DownedIceQueen" => plantera + 1.25f,
 			"Conditions.DownedEmpressOfLight" => empress + 0.01f,
 			"Conditions.DownedLunaticCultist" => cultist + 0.01f,
 			"Conditions.InTowerSolar" or "Conditions.InTowerVortex" or "Conditions.InTowerNebula" or "Conditions.InTowerStardust" => cultist + 0.1f,
@@ -86,6 +100,7 @@ public static class ConditionProgressionMapper
 			"Conditions.DownedMoonLord" => ml + 0.01f,
 			_ => -1f
 		};
+		hardmodeOverride = progression > wof;
 		return progression >= 0f;
 	}
 
@@ -100,6 +115,7 @@ public static class ConditionProgressionMapper
 		bool crimson = false;
 		bool corrupt = false;
 		bool unobtainable = false;
+		bool seasonal = false;
 		bool hasSpecial = false;
 		string specialText = null;
 
@@ -143,11 +159,17 @@ public static class ConditionProgressionMapper
 			{
 				corrupt = true;
 			}
-			else if (TryResolveKnownConditionKey(key, catalog, out float knownProg))
+			else if (TryEvaluateWorldOrSeedRecipeCondition(cond, key, catalog, ref minProg, ref hardmode, ref unobtainable, ref seasonal))
+			{
+				continue;
+			}
+			else if (TryResolveKnownConditionKey(key, catalog, out float knownProg, out bool knownHm, out bool knownPreHm))
 			{
 				minProg = Math.Max(minProg, knownProg);
-				if (knownProg > catalog.WallOfFleshProgression)
+				if (knownHm)
 					hardmode = true;
+				if (knownPreHm)
+					preHardmode = true;
 			}
 			else
 			{
@@ -175,6 +197,9 @@ public static class ConditionProgressionMapper
 			}
 		}
 
+		if (preHardmode && !hardmode)
+			hardmode = false;
+
 		return new ConditionGate
 		{
 			MinProgression = minProg,
@@ -186,9 +211,91 @@ public static class ConditionProgressionMapper
 			CrimsonOnly = crimson,
 			CorruptOnly = corrupt,
 			Unobtainable = unobtainable,
+			IsSeasonal = seasonal,
 			HasSpecialCondition = hasSpecial,
 			SpecialConditionText = specialText ?? string.Empty
 		};
+	}
+
+	private static bool TryEvaluateWorldOrSeedRecipeCondition(
+		Condition cond,
+		string key,
+		BossCatalog catalog,
+		ref float minProg,
+		ref bool hardmode,
+		ref bool unobtainable,
+		ref bool seasonal)
+	{
+		switch (key)
+		{
+			case "Conditions.WorldDrunk":
+				if (!Main.drunkWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldNotDrunk":
+				if (Main.drunkWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldRemix":
+				if (!Main.remixWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldNotRemix":
+				if (Main.remixWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldNotTheBees":
+				if (!Main.notTheBeesWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldNotNotTheBees":
+				if (Main.notTheBeesWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldForTheWorthy":
+				if (!Main.getGoodWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldNotForTheWorthy":
+				if (Main.getGoodWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldAnniversary":
+				if (!Main.tenthAnniversaryWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldNotAnniversary":
+				if (Main.tenthAnniversaryWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldDontStarve":
+				if (!Main.dontStarveWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldNotDontStarve":
+				if (Main.dontStarveWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldNoTraps":
+				if (!Main.noTrapsWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldNotNoTraps":
+				if (Main.noTrapsWorld) unobtainable = true;
+				return true;
+			case "Conditions.WorldZenith":
+				if (!(Main.remixWorld && Main.getGoodWorld)) unobtainable = true;
+				return true;
+			case "Conditions.WorldNotZenith":
+				if (Main.remixWorld && Main.getGoodWorld) unobtainable = true;
+				return true;
+			case "Conditions.HardmodeFTW":
+				if (!Main.getGoodWorld)
+					unobtainable = true;
+				else
+				{
+					hardmode = true;
+					minProg = Math.Max(minProg, (catalog?.WallOfFleshProgression ?? 7f) + 0.01f);
+				}
+				return true;
+			case "Conditions.InMultiplayer":
+				if (Main.netMode == NetmodeID.SinglePlayer) unobtainable = true;
+				return true;
+			case "Conditions.Christmas":
+				if (!Main.xMas) seasonal = true;
+				return true;
+			case "Conditions.Halloween":
+				if (!Main.halloween) seasonal = true;
+				return true;
+		}
+		return false;
 	}
 
 	public static ConditionGate EvaluateDropConditions(IEnumerable<IItemDropRuleCondition> conditions, BossCatalog catalog)
@@ -202,6 +309,9 @@ public static class ConditionProgressionMapper
 		bool crimson = false;
 		bool corrupt = false;
 		bool unobtainable = false;
+		bool challenge = false;
+		bool seasonal = false;
+		string specialText = null;
 
 		if (conditions == null)
 			return default;
@@ -214,7 +324,98 @@ public static class ConditionProgressionMapper
 			switch (cond)
 			{
 				case Conditions.NeverTrue:
+				case Conditions.NamedNPC:
 					unobtainable = true;
+					break;
+				case Conditions.MechdusaKill:
+					if (!(Main.remixWorld && Main.getGoodWorld))
+						unobtainable = true;
+					else
+					{
+						hardmode = true;
+						minProg = Math.Max(minProg, (catalog?.GetMechAllProgression() ?? (catalog.WallOfFleshProgression + 4f)) + 0.01f);
+					}
+					break;
+				case Conditions.EmpressOfLightIsGenuinelyEnraged:
+					challenge = true;
+					try
+					{
+						specialText ??= cond.GetConditionDescription();
+					}
+					catch
+					{
+					}
+					break;
+				case Conditions.RemixSeed:
+					if (!Main.remixWorld) unobtainable = true;
+					break;
+				case Conditions.NotRemixSeed:
+					if (Main.remixWorld) unobtainable = true;
+					break;
+				case Conditions.RemixSeedHardmode:
+					if (!Main.remixWorld)
+						unobtainable = true;
+					else
+					{
+						hardmode = true;
+						minProg = Math.Max(minProg, catalog.WallOfFleshProgression + 0.01f);
+					}
+					break;
+				case Conditions.RemixSeedEasymode:
+					if (!Main.remixWorld)
+						unobtainable = true;
+					else
+						preHardmode = true;
+					break;
+				case Conditions.TenthAnniversaryIsUp:
+					if (!Main.tenthAnniversaryWorld) unobtainable = true;
+					break;
+				case Conditions.TenthAnniversaryIsNotUp:
+					if (Main.tenthAnniversaryWorld) unobtainable = true;
+					break;
+				case Conditions.ZenithSeedIsUp:
+					if (!(Main.remixWorld && Main.getGoodWorld)) unobtainable = true;
+					break;
+				case Conditions.ZenithSeedIsNotUp:
+					if (Main.remixWorld && Main.getGoodWorld) unobtainable = true;
+					break;
+				case Conditions.ForTheWorthyIsUp:
+					if (!Main.getGoodWorld) unobtainable = true;
+					break;
+				case Conditions.ForTheWorthyIsNotUp:
+					if (Main.getGoodWorld) unobtainable = true;
+					break;
+				case Conditions.DrunkWorldIsUp:
+					if (!Main.drunkWorld) unobtainable = true;
+					break;
+				case Conditions.DrunkWorldIsNotUp:
+					if (Main.drunkWorld) unobtainable = true;
+					break;
+				case Conditions.DontStarveIsUp:
+					if (!Main.dontStarveWorld) unobtainable = true;
+					break;
+				case Conditions.DontStarveIsNotUp:
+					if (Main.dontStarveWorld) unobtainable = true;
+					break;
+				case Conditions.BeesSeed:
+					if (!Main.notTheBeesWorld) unobtainable = true;
+					break;
+				case Conditions.NotBeesSeed:
+					if (Main.notTheBeesWorld) unobtainable = true;
+					break;
+				case Conditions.NoTrapsSeed:
+					if (!Main.noTrapsWorld) unobtainable = true;
+					break;
+				case Conditions.NotNoTrapsSeed:
+					if (Main.noTrapsWorld) unobtainable = true;
+					break;
+				case Conditions.HalloweenGoodieBagDrop:
+				case Conditions.HalloweenWeapons:
+					if (!Main.halloween) seasonal = true;
+					break;
+				case Conditions.XmasPresentDrop:
+				case Conditions.IsChristmas:
+					if (!Main.xMas) seasonal = true;
 					break;
 				case Conditions.IsHardmode:
 				case Conditions.SoulOfLight:
@@ -223,12 +424,10 @@ public static class ConditionProgressionMapper
 				case Conditions.YoyosAmarok:
 				case Conditions.YoyosHelFire:
 				case Conditions.PirateMap:
-				case Conditions.RemixSeedHardmode:
 					hardmode = true;
 					minProg = Math.Max(minProg, catalog.WallOfFleshProgression + 0.01f);
 					break;
 				case Conditions.IsPreHardmode:
-				case Conditions.RemixSeedEasymode:
 					preHardmode = true;
 					break;
 				case Conditions.IsExpert:
@@ -255,16 +454,17 @@ public static class ConditionProgressionMapper
 						classic = true;
 					break;
 				case Conditions.YoyoCascade:
+					preHardmode = true;
 					minProg = Math.Max(minProg, catalog.GetProgressionForNpc(NPCID.SkeletronHead, 5f) + 0.01f);
 					break;
 				case Conditions.BeatAnyMechBoss:
 				case Conditions.YoyosYelets:
 					hardmode = true;
-					minProg = Math.Max(minProg, catalog.GetProgressionForNpc(NPCID.TheDestroyer, catalog.WallOfFleshProgression + 2f) + 0.01f);
+					minProg = Math.Max(minProg, (catalog?.GetMechAnyProgression() ?? (catalog.WallOfFleshProgression + 2f)) + 0.01f);
 					break;
 				case Conditions.DownedAllMechBosses:
 					hardmode = true;
-					minProg = Math.Max(minProg, catalog.GetProgressionForNpc(NPCID.SkeletronPrime, catalog.WallOfFleshProgression + 3f) + 0.01f);
+					minProg = Math.Max(minProg, (catalog?.GetMechAllProgression() ?? (catalog.WallOfFleshProgression + 4f)) + 0.01f);
 					break;
 				case Conditions.DownedPlantera:
 				case Conditions.YoyosKraken:
@@ -275,13 +475,13 @@ public static class ConditionProgressionMapper
 				case Conditions.FrozenKeyCondition:
 				case Conditions.DesertKeyCondition:
 					hardmode = true;
-					minProg = Math.Max(minProg, catalog.GetProgressionForNpc(NPCID.Plantera, catalog.WallOfFleshProgression + 4f) + 0.01f);
+					minProg = Math.Max(minProg, catalog.GetProgressionForNpc(NPCID.Plantera, catalog.WallOfFleshProgression + 5f) + 0.01f);
 					break;
 				case Conditions.IsPumpkinMoon:
 				case Conditions.PumpkinMoonDropGatingChance:
 				case Conditions.FrostMoonDropGatingChance:
 					hardmode = true;
-					minProg = Math.Max(minProg, catalog.GetProgressionForNpc(NPCID.Plantera, catalog.WallOfFleshProgression + 4f) + 0.5f);
+					minProg = Math.Max(minProg, catalog.GetProgressionForNpc(NPCID.Plantera, catalog.WallOfFleshProgression + 5f) + 1.25f);
 					break;
 				default:
 				{
@@ -300,6 +500,9 @@ public static class ConditionProgressionMapper
 			}
 		}
 
+		if (preHardmode && !hardmode)
+			hardmode = false;
+
 		return new ConditionGate
 		{
 			MinProgression = minProg,
@@ -310,7 +513,11 @@ public static class ConditionProgressionMapper
 			ClassicOnly = classic,
 			CrimsonOnly = crimson,
 			CorruptOnly = corrupt,
-			Unobtainable = unobtainable
+			Unobtainable = unobtainable,
+			IsChallengeCondition = challenge,
+			IsSeasonal = seasonal,
+			HasSpecialCondition = challenge,
+			SpecialConditionText = specialText ?? string.Empty
 		};
 	}
 
@@ -327,19 +534,27 @@ public static class ConditionProgressionMapper
 		if (string.IsNullOrWhiteSpace(raw))
 			return;
 
-		string text = raw.ToLowerInvariant();
+		string text = raw.ToLowerInvariant().Replace('\u00a0', ' ');
+
+		if (text.Contains("before defeating") || text.Contains("not defeated") || text.Contains("notdowned")
+			|| text.Contains("not during") || text.Contains("notbloodmoon") || text.Contains("notsolareclipse")
+			|| text.Contains("notbloodorsun") || text.Contains("до победы") || text.Contains("не побежд") || text.Contains("не во время"))
+		{
+			return;
+		}
 
 		float wof = catalog?.WallOfFleshProgression ?? 7.0f;
 		float skel = catalog?.GetProgressionForNpc(NPCID.SkeletronHead, 5.0f) ?? 5.0f;
-		float mech = catalog?.GetProgressionForNpc(NPCID.TheDestroyer, wof + 2.0f) ?? (wof + 2.0f);
-		float prime = catalog?.GetProgressionForNpc(NPCID.SkeletronPrime, wof + 3.0f) ?? (wof + 3.0f);
-		float plantera = catalog?.GetProgressionForNpc(NPCID.Plantera, wof + 4.0f) ?? (wof + 4.0f);
+		float mech = catalog?.GetMechAnyProgression() ?? (wof + 2.0f);
+		float prime = catalog?.GetProgressionForNpc(NPCID.SkeletronPrime, wof + 4.0f) ?? (wof + 4.0f);
+		float plantera = catalog?.GetProgressionForNpc(NPCID.Plantera, wof + 5.0f) ?? (wof + 5.0f);
 		float golem = catalog?.GetProgressionForNpc(NPCID.Golem, plantera + 1.0f) ?? (plantera + 1.0f);
-		float ml = catalog?.GetProgressionForNpc(NPCID.MoonLordCore, golem + 3.0f) ?? (golem + 3.0f);
+		float ml = catalog?.GetProgressionForNpc(NPCID.MoonLordCore, golem + 5.0f) ?? (golem + 5.0f);
 
 		if (text.Contains("hardmode") || text.Contains("хардмод") || text.Contains("сложном режиме"))
 		{
-			if (text.Contains("pre-hardmode") || text.Contains("пре-хардмод") || text.Contains("до хардмода"))
+			if (text.Contains("pre-hardmode") || text.Contains("prehardmode") || text.Contains("before hardmode")
+				|| text.Contains("пре-хардмод") || text.Contains("до хардмода"))
 			{
 				preHardmode = true;
 			}
@@ -383,12 +598,12 @@ public static class ConditionProgressionMapper
 
 		if (text.Contains("expert") || text.Contains("эксперт"))
 		{
-			if (!text.Contains("notexpert") && !text.Contains("не эксперт"))
+			if (!text.Contains("notexpert") && !text.Contains("not expert") && !text.Contains("не эксперт") && !text.Contains("не в эксперт"))
 				expert = true;
 		}
 		if (text.Contains("master") || text.Contains("мастер"))
 		{
-			if (!text.Contains("notmaster"))
+			if (!text.Contains("notmaster") && !text.Contains("not master") && !text.Contains("не мастер") && !text.Contains("не в мастер"))
 				master = true;
 		}
 
@@ -512,12 +727,17 @@ public static class ConditionProgressionMapper
 
 	private static bool IsBenignEnvironmentCondition(string key, string text)
 	{
-		string k = (key + " " + text).ToLowerInvariant();
+		string k = (key + " " + text).ToLowerInvariant().Replace('\u00a0', ' ');
 		return k.Contains("nearwater") || k.Contains("nearlava") || k.Contains("nearhoney") || k.Contains("nearshimmer")
 			|| k.Contains("inwater") || k.Contains("inhoney") || k.Contains("inrain") || k.Contains("timeday")
 			|| k.Contains("timenight") || k.Contains("graveyard") || k.Contains("alchemy")
+			|| k.Contains("notbloodmoon") || k.Contains("notsolareclipse") || k.Contains("notbloodorsun")
+			|| k.Contains("moonphase") || k.Contains("npcis") || k.Contains("bestiary") || k.Contains("golf")
+			|| k.Contains("angler") || k.Contains("happy") || k.Contains("windy") || k.Contains("birthday")
+			|| k.Contains("lantern") || k.Contains("shimmered") || k.Contains("notdowned")
 			|| k.Contains("в воде") || k.Contains("рядом с водой") || k.Contains("рядом с лавой")
-			|| k.Contains("рядом с мёдом") || k.Contains("кладбищ") || k.Contains("днём") || k.Contains("ночью");
+			|| k.Contains("рядом с мёдом") || k.Contains("кладбищ") || k.Contains("днём") || k.Contains("ночью")
+			|| k.Contains("не во время");
 	}
 
 	private static string TrimConditionKey(string key)

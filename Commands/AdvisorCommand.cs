@@ -24,9 +24,18 @@ public sealed class AdvisorCommand : ModCommand
 
 		if (args.Length == 0)
 		{
+			if (Main.dedServ)
+			{
+				caller.Reply(Usage);
+				return;
+			}
+
 			sys.ToggleOpen();
 			return;
 		}
+
+		if (sys.Recommender == null && args[0].ToLowerInvariant() != "rebuild")
+			sys.RebuildAnalysis();
 
 		string sub = args[0].ToLowerInvariant();
 		if (sub == "rebuild")
@@ -69,12 +78,18 @@ public sealed class AdvisorCommand : ModCommand
 	private static void PrintRecommendation(CommandCaller caller, BuildRecommendation rec)
 	{
 		string weapons = string.Join(", ", rec.PrimaryWeapons.Select(w => $"{Lang.GetItemNameValue(w.ItemType)} [{ModOf(w.ItemType)}]"));
-		string armor = rec.ArmorSet != null
-			? $"{Lang.GetItemNameValue(rec.ArmorSet.HeadType)} / {Lang.GetItemNameValue(rec.ArmorSet.BodyType)} / {Lang.GetItemNameValue(rec.ArmorSet.LegsType)} ({rec.ArmorSet.TotalDefense} def)"
-			: "None";
+		string armor = "None";
+		if (rec.ArmorSet != null)
+		{
+			string pieces = string.Join(" / ", new[] { rec.ArmorSet.HeadType, rec.ArmorSet.BodyType, rec.ArmorSet.LegsType }
+				.Where(id => id > ItemID.None)
+				.Select(Lang.GetItemNameValue));
+			armor = $"{pieces} ({rec.ArmorSet.TotalDefense} def)";
+		}
 		string accs = string.Join(", ", rec.Accessories.Select(a => Lang.GetItemNameValue(a.ItemType)));
+		string className = ItemTooltipAnalyzer.FormatClassDisplayName(rec.TargetClass);
 
-		caller.Reply($"=== Build for {rec.TargetStage.DisplayName} ({rec.TargetStage.ModSource}, stage {rec.TargetStage.Progression:0.#}) | Class: {rec.TargetClass.DisplayName.Value.Trim()} ===");
+		caller.Reply($"=== Build for {rec.TargetStage.DisplayName} ({rec.TargetStage.ModSource}, stage {rec.TargetStage.Progression:0.#}) | Class: {className} ===");
 		caller.Reply($"Weapons: {weapons}");
 		caller.Reply($"Armor: {armor}");
 		caller.Reply($"Accessories ({rec.Accessories.Count}): {accs}");
@@ -87,15 +102,8 @@ public sealed class AdvisorCommand : ModCommand
 		string classes = string.Join(", ", sys.Recommender.GetAvailablePlayableClasses().Select(c => $"{c.FullName}({c.DisplayName.Value.Trim()})"));
 
 		string msg = $"[BossBuildAdvisor] Stages ({sys.Catalog.AllStages.Count}): {stageSummary} | Classes: {classes} | ArmorSets: {sys.ArmorSets.Sets.Count} | GraphMs: {sys.Graph.BuildDurationMs}";
-		sys.Mod.Logger.Info(msg);
 		caller.Reply(msg);
-
-		// Also log sample builds for first 3 stages + any mod bosses to client.log for verification
-		foreach (BossStageInfo stage in sys.Catalog.AllStages.Where(s => s.IsBoss).Take(6))
-		{
-			BuildRecommendation rec = sys.Recommender.Recommend(stage, null, new BuildQueryOptions());
-			sys.Mod.Logger.Info($"[SampleBuild] {stage.DisplayName} ({stage.ModSource}, {stage.Progression:0.#}) -> {rec.TargetClass.Name}: Weapons=[{string.Join(", ", rec.PrimaryWeapons.Select(x => Lang.GetItemNameValue(x.ItemType)))}], Acc=[{string.Join(", ", rec.Accessories.Select(x => Lang.GetItemNameValue(x.ItemType)))}]");
-		}
+		sys.DumpDiagnosticsToLog();
 	}
 
 	private static string ModOf(int itemType)
